@@ -239,7 +239,6 @@ bool Input::DiscoverMouse(const std::string& device_path) {
 void Input::Read(int& mouse_dx) {
     mouse_dx = 0;
     struct input_event ev;
-    int event_count = 0;
     
     // Read keyboard events
     if (kbd_fd >= 0) {
@@ -255,14 +254,8 @@ void Input::Read(int& mouse_dx) {
         while (read(mouse_fd, &ev, sizeof(ev)) > 0) {
             if (ev.type == EV_REL && ev.code == REL_X) {
                 mouse_dx += ev.value;
-                event_count++;
             }
         }
-    }
-    
-    // Debug: print when mouse movement detected
-    if (event_count > 0) {
-        std::cout << "Mouse movement: " << event_count << " events, delta=" << mouse_dx << std::endl;
     }
 }
 

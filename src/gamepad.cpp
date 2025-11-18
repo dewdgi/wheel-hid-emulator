@@ -8,7 +8,7 @@
 #include <linux/input-event-codes.h>
 
 GamepadDevice::GamepadDevice() 
-    : fd(-1), steering(0), throttle(0.0f), brake(0.0f), dpad_x(0), dpad_y(0) {
+    : fd(-1), mouse_position(0), steering(0), throttle(0.0f), brake(0.0f), dpad_x(0), dpad_y(0) {
 }
 
 GamepadDevice::~GamepadDevice() {
@@ -123,30 +123,31 @@ bool GamepadDevice::Create() {
 }
 
 void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
-    // Debug: print steering updates
-    if (delta != 0) {
-        std::cout << "UpdateSteering: delta=" << delta << ", sensitivity=" << sensitivity << std::endl;
-    }
+    // Accumulate mouse position
+    mouse_position += delta;
     
-    // Linear steering calculation:
-    // Mouse DPI typically ~800-1600, assume 1000 DPI average
-    // At 1000 DPI: 10cm = 100mm = 3937 pixels (1000/25.4 * 100)
-    // Target: 10-20cm for full lock at sensitivity=50
-    // Full lock = 32768, let's use 15cm average = ~5905 pixels at 1000 DPI
-    // At sensitivity=50: 32768 / 5905 = 5.55 units per pixel
-    // Linear scaling: sensitivity * 0.111 gives us the multiplier
-    // sensitivity=50 -> 5.55, sensitivity=100 -> 11.1, sensitivity=1 -> 0.111
+    // Auto-center: decay mouse position towards 0 when no input
+    // This creates a "spring" effect that returns to center
+    float decay_rate = 0.95f;  // 5% decay per frame (at 1000 Hz = very smooth)
+    mouse_position *= decay_rate;
+    
+    // Convert mouse position to steering with linear scaling
+    // At 1000 DPI, 15cm = ~5905 pixels
+    // We want sensitivity=50 to reach full lock at ~15cm
+    // So: pixels_for_full_lock = 5905 * (50 / sensitivity)
+    // steering = mouse_position * (32768 / pixels_for_full_lock)
+    // Simplified: steering = mouse_position * sensitivity * 0.111
     float multiplier = sensitivity * 0.111f;
-    float delta_steering = delta * multiplier;
-    steering += delta_steering;
+    steering = mouse_position * multiplier;
     
     // Clamp to int16_t range
-    if (steering < -32768.0f) steering = -32768.0f;
-    if (steering > 32767.0f) steering = 32767.0f;
-    
-    // Debug: print final steering value when it changes
-    if (delta != 0) {
-        std::cout << "  New steering value: " << steering << std::endl;
+    if (steering < -32768.0f) {
+        steering = -32768.0f;
+        mouse_position = -32768.0f / multiplier;  // Clamp mouse pos too
+    }
+    if (steering > 32767.0f) {
+        steering = 32767.0f;
+        mouse_position = 32767.0f / multiplier;
     }
 }
 

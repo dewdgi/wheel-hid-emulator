@@ -24,6 +24,9 @@ bool Config::Load() {
     // Set default values
     sensitivity = 50;
     
+    // Set default values
+    sensitivity = 50;
+    
     // Set default button mappings
     button_map["KEY_Q"] = BTN_A;
     button_map["KEY_E"] = BTN_B;
