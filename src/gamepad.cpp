@@ -198,21 +198,46 @@ bool GamepadDevice::CreateUSBGadget() {
         }
     }
     
+    // Check if configfs is mounted, if not try to mount it
+    if (access("/sys/kernel/config", F_OK) != 0) {
+        system("mkdir -p /sys/kernel/config 2>/dev/null");
+        system("mount -t configfs none /sys/kernel/config 2>/dev/null");
+    }
+    
+    // Verify configfs and usb_gadget directory exists
+    if (access("/sys/kernel/config/usb_gadget", F_OK) != 0) {
+        std::cerr << "USB Gadget ConfigFS not available in kernel" << std::endl;
+        std::cerr << "Kernel needs CONFIG_USB_CONFIGFS=y" << std::endl;
+        return false;
+    }
+    
+    // Check for UDC (USB Device Controller)
+    if (access("/sys/class/udc", F_OK) != 0) {
+        std::cerr << "No USB Device Controller (UDC) found" << std::endl;
+        std::cerr << "Load dummy_hcd: sudo modprobe dummy_hcd" << std::endl;
+        return false;
+    }
+    
     // Try to set up USB Gadget ConfigFS
     std::string cmd;
     
     // Remove existing gadget if present
-    cmd = "test -d " + std::string(gadget_base) + " && (echo '' > " + std::string(gadget_base) + "/UDC 2>/dev/null || true; "
-          "rm -f " + std::string(gadget_base) + "/configs/c.1/hid.usb0 2>/dev/null || true; "
-          "rmdir " + std::string(gadget_base) + "/configs/c.1/strings/0x409 2>/dev/null || true; "
-          "rmdir " + std::string(gadget_base) + "/configs/c.1 2>/dev/null || true; "
-          "rmdir " + std::string(gadget_base) + "/functions/hid.usb0 2>/dev/null || true; "
-          "rmdir " + std::string(gadget_base) + "/strings/0x409 2>/dev/null || true; "
-          "rmdir " + std::string(gadget_base) + " 2>/dev/null || true) 2>/dev/null";
+    cmd = "cd /sys/kernel/config/usb_gadget 2>/dev/null && "
+          "if [ -d g29wheel ]; then "
+          "  cd g29wheel && "
+          "  echo '' > UDC 2>/dev/null || true; "
+          "  rm -f configs/c.1/hid.usb0 2>/dev/null || true; "
+          "  rmdir configs/c.1/strings/0x409 2>/dev/null || true; "
+          "  rmdir configs/c.1 2>/dev/null || true; "
+          "  rmdir functions/hid.usb0 2>/dev/null || true; "
+          "  rmdir strings/0x409 2>/dev/null || true; "
+          "  cd .. && rmdir g29wheel 2>/dev/null || true; "
+          "fi";
     system(cmd.c_str());
     
     // Create gadget directory structure
-    cmd = "mkdir -p " + std::string(gadget_base) + " && cd " + std::string(gadget_base) + " && "
+    cmd = "cd /sys/kernel/config/usb_gadget && "
+          "mkdir g29wheel && cd g29wheel && "
           "echo 0x046d > idVendor && "
           "echo 0xc24f > idProduct && "
           "echo 0x0111 > bcdDevice && "
@@ -224,7 +249,7 @@ bool GamepadDevice::CreateUSBGadget() {
           "mkdir -p functions/hid.usb0 && cd functions/hid.usb0 && "
           "echo 1 > protocol && echo 1 > subclass && echo 16 > report_length && "
           "printf '\\x05\\x01\\x09\\x04\\xa1\\x01\\x09\\x01\\xa1\\x00\\x09\\x30\\x15\\x00\\x27\\xff\\xff\\x00\\x00\\x35\\x00\\x47\\xff\\xff\\x00\\x00\\x75\\x10\\x95\\x01\\x81\\x02\\xc0\\x09\\x01\\xa1\\x00\\x09\\x33\\x09\\x34\\x09\\x35\\x15\\x00\\x27\\xff\\xff\\x00\\x00\\x35\\x00\\x47\\xff\\xff\\x00\\x00\\x75\\x10\\x95\\x03\\x81\\x02\\xc0\\x09\\x39\\x15\\x00\\x25\\x07\\x35\\x00\\x46\\x3b\\x01\\x65\\x14\\x75\\x04\\x95\\x01\\x81\\x42\\x75\\x04\\x95\\x01\\x81\\x03\\x05\\x09\\x19\\x01\\x29\\x19\\x15\\x00\\x25\\x01\\x75\\x01\\x95\\x19\\x81\\x02\\x75\\x07\\x95\\x01\\x81\\x03\\xc0' > report_desc && "
-          "cd " + std::string(gadget_base) + " && "
+          "cd /sys/kernel/config/usb_gadget/g29wheel && "
           "mkdir -p configs/c.1/strings/0x409 && "
           "echo 'G29 Configuration' > configs/c.1/strings/0x409/configuration && "
           "echo 500 > configs/c.1/MaxPower && "
@@ -234,12 +259,7 @@ bool GamepadDevice::CreateUSBGadget() {
     
     int ret = system(cmd.c_str());
     if (ret != 0) {
-        std::cerr << "Failed to setup USB Gadget ConfigFS" << std::endl;
-        std::cerr << "Requirements:" << std::endl;
-        std::cerr << "  1. Kernel with CONFIG_USB_CONFIGFS=y" << std::endl;
-        std::cerr << "  2. USB Device Controller (UDC) hardware OR dummy_hcd module" << std::endl;
-        std::cerr << "  3. ConfigFS mounted at /sys/kernel/config" << std::endl;
-        std::cerr << "Try: sudo modprobe dummy_hcd" << std::endl;
+        std::cerr << "Failed to setup USB Gadget (command returned " << ret << ")" << std::endl;
         return false;
     }
     
