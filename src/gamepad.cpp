@@ -2,6 +2,7 @@
 #include "input.h"
 #include <fcntl.h>
 #include <unistd.h>
+#include <poll.h>
 #include <cstring>
 #include <iostream>
 #include <dirent.h>
@@ -16,7 +17,15 @@ GamepadDevice::GamepadDevice()
 }
 
 GamepadDevice::~GamepadDevice() {
-    // Stop USB Gadget polling thread if running
+    // Stop FFB thread if running
+    if (ffb_running) {
+        ffb_running = false;
+        if (ffb_thread.joinable()) {
+            ffb_thread.join();
+        }
+    }
+    
+    // Stop USB Gadget thread if running
     if (gadget_running) {
         gadget_running = false;
         if (gadget_thread.joinable()) {
@@ -25,14 +34,6 @@ GamepadDevice::~GamepadDevice() {
     }
     
     if (fd >= 0) {
-        if (use_uhid) {
-            struct uhid_event ev;
-            memset(&ev, 0, sizeof(ev));
-            ev.type = UHID_DESTROY;
-            write(fd, &ev, sizeof(ev));
-        } else {
-            ioctl(fd, UI_DEV_DESTROY);
-        }
         close(fd);
     }
 }
@@ -302,6 +303,10 @@ bool GamepadDevice::CreateUSBGadget() {
     gadget_running = true;
     gadget_thread = std::thread(&GamepadDevice::USBGadgetPollingThread, this);
     
+    // Start FFB update thread (continuously applies FFB forces)
+    ffb_running = true;
+    ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
+    
     return true;
 }
 
@@ -474,18 +479,9 @@ void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
     // Convert mouse delta to steering angle with sensitivity
     float scaled_delta = delta * static_cast<float>(sensitivity) * 0.2f;
     
-    // Apply FFB resistance: FFB force pulls wheel away from mouse input
-    // Mouse must overcome FFB to change steering position
-    float total_force = scaled_delta - static_cast<float>(ffb_force) * 0.1f;
-    
-    // Apply autocenter spring force (pulls toward center)
-    if (ffb_autocenter > 0 && ffb_enabled) {
-        // Spring force proportional to distance from center
-        float spring_force = -(steering * static_cast<float>(ffb_autocenter)) / 32768.0f;
-        total_force += spring_force;
-    }
-    
-    steering += total_force;
+    // Mouse input ADDS to steering position
+    // FFB forces are applied separately in FFBUpdateThread()
+    steering += scaled_delta;
     
     // Clamp to int16_t range
     if (steering < -32768.0f) steering = -32768.0f;
@@ -862,51 +858,109 @@ void GamepadDevice::ProcessUHIDEvents() {
 }
 
 void GamepadDevice::USBGadgetPollingThread() {
-    // This thread mimics real USB HID device behavior:
-    // - Host polls the interrupt IN endpoint at regular intervals (1-8ms typical)
-    // - Device responds immediately with current HID report
-    // - This is request-response, not push-based
+    // USB Gadget bidirectional communication:
+    // - Write INPUT reports (joystick state) when host polls
+    // - Read OUTPUT reports (FFB commands) when host sends them
     
-    std::cout << "USB Gadget polling thread started (mimicking real USB HID behavior)" << std::endl;
+    std::cout << "USB Gadget polling thread started" << std::endl;
     
-    // Set to blocking mode for proper poll-response behavior
+    // Use non-blocking I/O with poll() for bidirectional communication
     int flags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    
+    struct pollfd pfd;
+    pfd.fd = fd;
+    pfd.events = POLLIN | POLLOUT;  // Monitor both read and write
+    
+    uint8_t ffb_buffer[7];  // G29 FFB commands are 7 bytes
     
     while (gadget_running) {
-        // Build current HID report with thread-safe state access
-        std::vector<uint8_t> report;
-        {
-            std::lock_guard<std::mutex> lock(state_mutex);
-            report = BuildHIDReport();
-        }
-        
-        // Write report - this blocks until host polls (like real USB HID)
-        // The kernel USB gadget driver handles the actual USB protocol
-        ssize_t ret = write(fd, report.data(), report.size());
+        // Wait for either read or write ready (with timeout)
+        int ret = poll(&pfd, 1, 100);  // 100ms timeout
         
         if (ret < 0) {
-            if (errno == EAGAIN || errno == EINTR) {
-                // Temporary error, retry
-                usleep(1000);
-                continue;
-            } else if (errno == ESHUTDOWN || errno == ECONNRESET) {
-                // Device disconnected gracefully
-                std::cout << "USB Gadget device disconnected" << std::endl;
-                break;
-            } else {
-                // Other error
-                std::cerr << "USB Gadget write error: " << strerror(errno) << std::endl;
-                usleep(1000);
+            if (errno == EINTR) continue;
+            std::cerr << "USB Gadget poll error: " << strerror(errno) << std::endl;
+            break;
+        }
+        
+        if (ret == 0) {
+            // Timeout - continue loop
+            continue;
+        }
+        
+        // Check for FFB OUTPUT reports from host
+        if (pfd.revents & POLLIN) {
+            ssize_t bytes = read(fd, ffb_buffer, sizeof(ffb_buffer));
+            if (bytes == 7) {
+                // Valid FFB command received
+                ParseFFBCommand(ffb_buffer, bytes);
+            } else if (bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                std::cerr << "USB Gadget read error: " << strerror(errno) << std::endl;
             }
         }
         
-        // Small delay to prevent CPU spinning if there's an issue
-        // Real polling rate is controlled by host (typically 1-8ms)
-        usleep(100);
+        // Send INPUT report when host is ready to receive
+        if (pfd.revents & POLLOUT) {
+            std::vector<uint8_t> report;
+            {
+                std::lock_guard<std::mutex> lock(state_mutex);
+                report = BuildHIDReport();
+            }
+            
+            ssize_t bytes = write(fd, report.data(), report.size());
+            if (bytes < 0) {
+                if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                    if (errno == ESHUTDOWN || errno == ECONNRESET) {
+                        std::cout << "USB Gadget device disconnected" << std::endl;
+                        break;
+                    }
+                    std::cerr << "USB Gadget write error: " << strerror(errno) << std::endl;
+                }
+            }
+        }
+        
+        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            std::cerr << "USB Gadget poll error flags" << std::endl;
+            break;
+        }
     }
     
     std::cout << "USB Gadget polling thread stopped" << std::endl;
+}
+
+void GamepadDevice::FFBUpdateThread() {
+    // This thread continuously applies FFB forces to steering position
+    // Runs independently of mouse input - FFB works even without moving mouse
+    
+    std::cout << "FFB update thread started" << std::endl;
+    
+    while (ffb_running) {
+        {
+            std::lock_guard<std::mutex> lock(state_mutex);
+            
+            // Apply constant force from game (resistance/effects)
+            if (ffb_force != 0) {
+                steering += static_cast<float>(ffb_force) / 100.0f;
+            }
+            
+            // Apply autocenter spring force
+            if (ffb_autocenter > 0) {
+                // Spring pulls toward center, strength based on current angle
+                float spring_force = -(steering * static_cast<float>(ffb_autocenter)) / 65536.0f;
+                steering += spring_force;
+            }
+            
+            // Clamp to int16_t range
+            if (steering < -32768.0f) steering = -32768.0f;
+            if (steering > 32767.0f) steering = 32767.0f;
+        }
+        
+        // Update at ~100Hz (10ms per frame)
+        usleep(10000);
+    }
+    
+    std::cout << "FFB update thread stopped" << std::endl;
 }
 
 void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
@@ -916,6 +970,13 @@ void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
     
     uint8_t cmd = data[0];
     
+    // Debug: Print FFB commands
+    std::cout << "FFB: " << std::hex;
+    for (size_t i = 0; i < size; i++) {
+        std::cout << (int)data[i] << " ";
+    }
+    std::cout << std::dec << std::endl;
+    
     // Logitech G29 FFB protocol (based on hid-lg4ff.c kernel driver)
     switch (cmd) {
         case 0x11:  // Constant force effect (slot 1)
@@ -923,17 +984,22 @@ void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
             // data[2] = force magnitude (0x00-0xFF, 0x80 = no force)
             // data[3] = direction? (0x80 = center)
             {
-                int8_t force = static_cast<int8_t>(data[2]) - 0x80;  // Convert to -128..127
-                ffb_force = force * 256;  // Scale to steering range
+                // Convert 0x00-0xFF range to -128..127 force value
+                // DO NOT SCALE - apply force exactly as game sends it
+                int8_t force = static_cast<int8_t>(data[2]) - 0x80;
+                ffb_force = force * 256;  // Convert to int16_t range
+                std::cout << "FFB Constant Force: " << (int)ffb_force << std::endl;
             }
             break;
             
         case 0x13:  // Stop effect / de-activate force
             ffb_force = 0;
+            std::cout << "FFB Stop" << std::endl;
             break;
             
         case 0xf5:  // Disable autocenter
             ffb_autocenter = 0;
+            std::cout << "FFB Autocenter OFF" << std::endl;
             break;
             
         case 0xfe:  // Set autocenter parameters
@@ -942,6 +1008,7 @@ void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
             // data[4] = spring rate
             if (data[1] == 0x0d) {
                 ffb_autocenter = static_cast<int16_t>(data[2]) * 128;  // Scale to usable range
+                std::cout << "FFB Autocenter Params: " << ffb_autocenter << std::endl;
             }
             break;
             
@@ -949,6 +1016,7 @@ void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
             if (ffb_autocenter == 0) {
                 ffb_autocenter = 4096;  // Default moderate autocenter
             }
+            std::cout << "FFB Autocenter ON: " << ffb_autocenter << std::endl;
             break;
             
         case 0xf8:  // Extended commands (range, mode switching, LEDs, etc.)
