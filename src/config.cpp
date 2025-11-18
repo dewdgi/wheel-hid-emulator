@@ -21,6 +21,9 @@ bool Config::Load() {
     SaveDefault(system_config);
     std::cout << "Default config saved. Please edit " << system_config << " and run --detect to configure devices." << std::endl;
     
+    // Set default values
+    sensitivity = 50;
+    
     // Set default button mappings
     button_map["KEY_Q"] = BTN_A;
     button_map["KEY_E"] = BTN_B;
@@ -133,7 +136,7 @@ void Config::SaveDefault(const char* path) {
     file << "mouse=\n\n";
     
     file << "[sensitivity]\n";
-    file << "sensitivity=20\n\n";
+    file << "sensitivity=50\n\n";
     
     file << "[button_mapping]\n";
     file << "# Xbox 360 Controller Button Mapping\n";

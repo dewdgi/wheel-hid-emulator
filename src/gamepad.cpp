@@ -128,9 +128,16 @@ void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
         std::cout << "UpdateSteering: delta=" << delta << ", sensitivity=" << sensitivity << std::endl;
     }
     
-    // Linear steering: sensitivity is a direct multiplier (1-100%)
-    // At 5% sensitivity: delta * 0.05, at 100%: delta * 1.0
-    float delta_steering = delta * (sensitivity / 100.0f);
+    // Linear steering calculation:
+    // Mouse DPI typically ~800-1600, assume 1000 DPI average
+    // At 1000 DPI: 10cm = 100mm = 3937 pixels (1000/25.4 * 100)
+    // Target: 10-20cm for full lock at sensitivity=50
+    // Full lock = 32768, let's use 15cm average = ~5905 pixels at 1000 DPI
+    // At sensitivity=50: 32768 / 5905 = 5.55 units per pixel
+    // Linear scaling: sensitivity * 0.111 gives us the multiplier
+    // sensitivity=50 -> 5.55, sensitivity=100 -> 11.1, sensitivity=1 -> 0.111
+    float multiplier = sensitivity * 0.111f;
+    float delta_steering = delta * multiplier;
     steering += delta_steering;
     
     // Clamp to int16_t range

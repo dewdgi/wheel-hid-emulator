@@ -6,7 +6,7 @@
 
 class Config {
 public:
-    int sensitivity = 20;
+    int sensitivity = 50;
     std::string keyboard_device;  // e.g. "/dev/input/event6"
     std::string mouse_device;     // e.g. "/dev/input/event11"
     std::map<std::string, int> button_map;
