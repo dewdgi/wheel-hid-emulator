@@ -308,8 +308,8 @@ int main(int argc, char* argv[]) {
             gamepad.SendNeutral();
         }
         
-        // Sleep for 1ms (1000 Hz update rate)
-        usleep(1000);
+        // Sleep for 8ms (125 Hz update rate, matching real racing wheels)
+        usleep(8000);
     }
     
     // Cleanup

@@ -75,32 +75,32 @@ bool GamepadDevice::Create() {
     abs_setup.absinfo.flat = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
     
-    // Y axis (unused for G29)
+    // Y axis (unused for G29) - Real G29 keeps this at maximum
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_Y;
     abs_setup.absinfo.minimum = -32768;
     abs_setup.absinfo.maximum = 32767;
-    abs_setup.absinfo.value = 0;
+    abs_setup.absinfo.value = 32767;  // Match real G29
     abs_setup.absinfo.fuzz = 0;
     abs_setup.absinfo.flat = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
     
-    // Brake pedal (ABS_Z)
+    // Brake pedal (ABS_Z) - G29 pedals are inverted: 255 at rest, 0 when fully pressed
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_Z;
     abs_setup.absinfo.minimum = 0;
     abs_setup.absinfo.maximum = 255;
-    abs_setup.absinfo.value = 0;
+    abs_setup.absinfo.value = 255;  // At rest = maximum
     abs_setup.absinfo.fuzz = 0;
     abs_setup.absinfo.flat = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
     
-    // Throttle pedal (ABS_RZ)
+    // Throttle pedal (ABS_RZ) - G29 pedals are inverted: 255 at rest, 0 when fully pressed
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_RZ;
     abs_setup.absinfo.minimum = 0;
     abs_setup.absinfo.maximum = 255;
-    abs_setup.absinfo.value = 0;
+    abs_setup.absinfo.value = 255;  // At rest = maximum
     abs_setup.absinfo.fuzz = 0;
     abs_setup.absinfo.flat = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
@@ -225,12 +225,13 @@ void GamepadDevice::SendState() {
     // Send steering wheel position - convert float to int16_t
     EmitEvent(EV_ABS, ABS_X, static_cast<int16_t>(steering));
     
-    // Send Y axis (unused for G29, always 0)
-    EmitEvent(EV_ABS, ABS_Y, 0);
+    // Send Y axis (unused for G29, always at maximum like real wheel)
+    EmitEvent(EV_ABS, ABS_Y, 32767);
     
     // Send throttle and brake as pedal axes (G29 standard)
-    uint8_t throttle_val = static_cast<uint8_t>(throttle * 2.55f);
-    uint8_t brake_val = static_cast<uint8_t>(brake * 2.55f);
+    // Real G29 pedals are inverted: 255 at rest, 0 when fully pressed
+    uint8_t throttle_val = 255 - static_cast<uint8_t>(throttle * 2.55f);
+    uint8_t brake_val = 255 - static_cast<uint8_t>(brake * 2.55f);
     
     EmitEvent(EV_ABS, ABS_Z, brake_val);    // Brake pedal
     EmitEvent(EV_ABS, ABS_RZ, throttle_val); // Throttle pedal
@@ -260,13 +261,18 @@ void GamepadDevice::SendState() {
 void GamepadDevice::SendNeutral() {
     if (fd < 0) return;
     
+    // Reset steering to center
+    steering = 0;
+    throttle = 0;
+    brake = 0;
+    
     // Zero all axes (center steering wheel)
     EmitEvent(EV_ABS, ABS_X, 0);
-    EmitEvent(EV_ABS, ABS_Y, 0);
+    EmitEvent(EV_ABS, ABS_Y, 32767);  // Match real G29
     
-    // Zero pedals
-    EmitEvent(EV_ABS, ABS_Z, 0);
-    EmitEvent(EV_ABS, ABS_RZ, 0);
+    // Reset pedals to resting position (inverted: 255 = not pressed, shows as +32767 in jstest)
+    EmitEvent(EV_ABS, ABS_Z, 255);
+    EmitEvent(EV_ABS, ABS_RZ, 255);
     
     // Zero all buttons
     EmitEvent(EV_KEY, BTN_TRIGGER, 0);
