@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <cstring>
 #include <iostream>
+#include <dirent.h>
 #include <linux/uinput.h>
 #include <linux/input-event-codes.h>
 
@@ -132,7 +133,34 @@ bool GamepadDevice::Create() {
     ioctl(fd, UI_DEV_SETUP, &setup);
     ioctl(fd, UI_DEV_CREATE);
     
-    std::cout << "Virtual Logitech G29 Racing Wheel created" << std::endl;
+    // Wait a moment for the device to be created
+    usleep(100000);
+    
+    // Find the event device path
+    std::string event_path = "unknown";
+    DIR* dir = opendir("/dev/input");
+    if (dir) {
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != nullptr) {
+            if (strncmp(entry->d_name, "event", 5) == 0) {
+                std::string path = std::string("/dev/input/") + entry->d_name;
+                int test_fd = open(path.c_str(), O_RDONLY);
+                if (test_fd >= 0) {
+                    char name[256] = "Unknown";
+                    ioctl(test_fd, EVIOCGNAME(sizeof(name)), name);
+                    if (strcmp(name, "Logitech G29 Racing Wheel") == 0) {
+                        event_path = path;
+                        close(test_fd);
+                        break;
+                    }
+                    close(test_fd);
+                }
+            }
+        }
+        closedir(dir);
+    }
+    
+    std::cout << "Virtual Logitech G29 Racing Wheel created at " << event_path << std::endl;
     return true;
 }
 

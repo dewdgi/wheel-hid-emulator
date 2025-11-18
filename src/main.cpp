@@ -234,7 +234,7 @@ int main(int argc, char* argv[]) {
     }
     
     std::cout << "=== Wheel Emulator ===" << std::endl;
-    std::cout << "Transform keyboard+mouse into Xbox 360 gamepad for racing games" << std::endl;
+    std::cout << "Transform keyboard+mouse into Logitech G29 Racing Wheel for racing games" << std::endl;
     std::cout << std::endl;
     
     // Setup signal handler
