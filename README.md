@@ -1,15 +1,17 @@
-# Wheel Emulator
+# Wheel HID Emulator
 
 Transform keyboard and mouse into a Logitech G29 Racing Wheel for racing games on Linux.
 
 ## Features
 
+- Emulates Logitech G29 Driving Force Racing Wheel (VID:0x046d PID:0xc24f)
 - Mouse horizontal movement → Steering wheel
-- W/S keys → Throttle/Brake with analog ramping
+- W/S keys → Throttle/Brake pedals (ramping 0-100%)
+- 25 buttons mapped to keyboard keys
 - Arrow keys → D-Pad
-- Configurable button mappings
-- Toggle emulation on/off with Ctrl+M
-- Adjustable steering sensitivity
+- Ctrl+M to toggle emulation on/off
+- 125 Hz update rate
+- Auto-detection mode for keyboard/mouse
 
 ## Requirements
 
@@ -23,88 +25,92 @@ Transform keyboard and mouse into a Logitech G29 Racing Wheel for racing games o
 make
 ```
 
-## Installation
-
-```bash
-sudo make install
-```
-
-This installs the binary to `/usr/local/bin/wheel-emulator`.
-
 ## Usage
 
-Run with root privileges:
-
 ```bash
+# First time: detect your keyboard and mouse
+sudo ./wheel-emulator --detect
+
+# Run emulator
 sudo ./wheel-emulator
 ```
 
-### Controls
+Press **Ctrl+M** to toggle emulation on/off.  
+Press **Ctrl+C** to exit.
 
-- **Ctrl+M** - Toggle emulation on/off
-- **Ctrl+C** - Exit program
-- **Mouse** - Steering (horizontal movement)
-- **W** - Throttle (analog)
-- **S** - Brake (analog)
-- **Arrow keys** - D-Pad
-- **Q/E/F/G/H** - Buttons (default: A/B/X/Y/LB)
+## Controls
+
+**Steering & Pedals:**
+- Mouse X → Steering wheel
+- W key (hold) → Throttle (0-100%)
+- S key (hold) → Brake (0-100%)
+
+**D-Pad:**
+- Arrow keys → Up/Down/Left/Right
+
+**Buttons (25 total):**  
+Q, E, F, G, H, R, T, Y, U, I, O, P, 1-0, LShift, Space, Tab
+
+See `/etc/wheel-emulator.conf` for suggested game actions.
 
 ## Configuration
 
-Configuration file is automatically created at `~/.config/wheel-emulator.conf` on first run.
-
-You can also place it at `/etc/wheel-emulator.conf` for system-wide configuration.
-
-### Example Configuration
+Edit `/etc/wheel-emulator.conf`:
 
 ```ini
-[sensitivity]
-sensitivity=20
+[devices]
+keyboard=/dev/input/event6
+mouse=/dev/input/event11
 
-[button_mapping]
-KEY_Q=BTN_A
-KEY_E=BTN_B
-KEY_F=BTN_X
-KEY_G=BTN_Y
-KEY_H=BTN_TL
+[sensitivity]
+sensitivity=50
 ```
 
-### Sensitivity
-
-Values range from 1 to 100:
-- Linear scaling: sensitivity directly multiplies mouse movement
-- Lower values (1-10) = very low sensitivity, requires large mouse movements
-- Medium values (20-50) = balanced sensitivity
-- Higher values (80-100) = high sensitivity, small movements create large steering
-- Default: 20
-- Recommended for racing: 5-20 depending on mouse DPI
-
-### Button Mapping
-
-Available buttons (from G29 wheel):
-- BTN_A, BTN_B, BTN_X, BTN_Y
-- BTN_TL (left bumper), BTN_TR (right bumper)
-- BTN_SELECT, BTN_START
-
-Available keys: Any KEY_* from Linux input event codes (e.g., KEY_Q, KEY_E, KEY_SPACE, KEY_TAB)
+**Sensitivity:** 1-100 (default 50). Internally scaled by 0.2.
 
 ## How It Works
 
-1. Auto-discovers keyboard and mouse from `/dev/input/event*`
-   - Prioritizes real keyboards over consumer control devices
-   - Prioritizes real mice, excludes keyboard pointer devices
-   - Filters out touchpads and virtual input devices
-2. Creates a virtual Logitech G29 Racing Wheel via `/dev/uinput`
-3. When enabled, grabs keyboard and mouse for exclusive access
-4. Reads input events and translates them to gamepad events
-5. Sends gamepad state at 1000 Hz
+1. Creates virtual Logitech G29 wheel via `/dev/uinput`
+2. Reads keyboard/mouse from `/dev/input/event*`
+3. When enabled (Ctrl+M), grabs devices for exclusive access
+4. Translates mouse/keyboard input to wheel/pedals/buttons
+5. Emits events at 125 Hz
 
-When emulation is disabled (default), all inputs pass through normally. Press Ctrl+M to enable.
+## Technical Details
 
-## Architecture
+**Virtual Device:**
+- Name: "Logitech G29 Driving Force Racing Wheel"
+- VID: 0x046d, PID: 0xc24f
 
-See `LOGICK.txt` for detailed architecture documentation.
+**Axes:**
+- ABS_X: Steering (-32768 to 32767)
+- ABS_Y: Unused (always 32767)
+- ABS_Z: Brake (32767=rest, -32768=pressed) **INVERTED**
+- ABS_RZ: Throttle (32767=rest, -32768=pressed) **INVERTED**
+- ABS_HAT0X/Y: D-Pad
+
+**Inverted Pedals:** Real G29 uses inverted pedals. This is required for proper detection in Windows/games.
+
+## Troubleshooting
+
+**Wheel not detected:**
+- Check: `ls /dev/input/by-id/ | grep Logitech`
+- Test: `jstest /dev/input/js0` or `evtest`
+
+**Wrong keyboard/mouse:**
+- Run: `sudo ./wheel-emulator --detect`
+
+**Permission denied:**
+- Run with `sudo`
+
+**Steering too sensitive/insensitive:**
+- Edit `/etc/wheel-emulator.conf`, change `sensitivity=50`
+
+## Documentation
+
+- `README.md` - This file
+- `logics.md` - Detailed architecture
 
 ## License
 
-Open source - feel free to modify and distribute.
+Open source.

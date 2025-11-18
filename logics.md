@@ -100,12 +100,12 @@ wheel-hid-emulator/
 | Button 25   | Tab          | Look left/right           |
 
 **D-Pad**:
-- Hat0X: A (left) / D (right)
-- Hat0Y: W (up) / S (down)
+- Hat0X: Arrow Left / Arrow Right
+- Hat0Y: Arrow Up / Arrow Down
 
 **Pedals**:
-- Throttle: Mouse vertical movement (forward = press throttle)
-- Brake: Mouse vertical movement (backward = press brake)
+- Throttle: W key (hold to increase 0-100%)
+- Brake: S key (hold to increase 0-100%)
 
 **Steering**:
 - Wheel: Mouse horizontal movement (left/right)
@@ -116,7 +116,7 @@ wheel-hid-emulator/
 
 ## Program Flow
 
-### Detection Mode (`--detect-devices` flag)
+### Detection Mode (`--detect` flag)
 
 Interactive device identification:
 
@@ -151,7 +151,7 @@ Interactive device identification:
    ```
    while running:
        Read keyboard events → update key state map
-       Read mouse events → accumulate X/Y deltas
+       Read mouse events → accumulate X delta
        
        Check for Ctrl+M toggle:
            if toggled ON:  grab devices, enable emulation
@@ -159,8 +159,9 @@ Interactive device identification:
        
        if emulation enabled:
            Update steering (mouse X delta, sensitivity scaled)
-           Update throttle/brake (mouse Y delta accumulation)
-           Update D-Pad (WASD keys)
+           Update throttle (W key hold ramping)
+           Update brake (S key hold ramping)
+           Update D-Pad (Arrow keys)
            Update all 25 buttons
            Send gamepad state
        else:
@@ -196,21 +197,28 @@ wheelPosition = clamp(wheelPosition, -32768.0f, 32767.0f);
 - **No dead zone**: Every mouse movement counts
 - **No center spring**: Wheel stays where you leave it (until you move mouse back)
 
-### Pedals (Mouse Y Delta Accumulation)
+### Pedals (Key Hold Ramping)
 
 ```cpp
-// Mouse Y delta accumulation (positive = forward, negative = backward)
-mouseY += delta;
+// Throttle ramping (W key)
+if (W_pressed) {
+    throttle = min(throttle + 3.0f, 100.0f);
+} else {
+    throttle = max(throttle - 3.0f, 0.0f);
+}
 
-// Clamp to 0-100 range
-if (mouseY > 100) mouseY = 100;
-if (mouseY < 0) mouseY = 0;
+// Brake ramping (S key)
+if (S_pressed) {
+    brake = min(brake + 3.0f, 100.0f);
+} else {
+    brake = max(brake - 3.0f, 0.0f);
+}
 
 // Convert to G29 axis values (INVERTED)
 // 0% pedal → 32767 (at rest)
 // 100% pedal → -32768 (fully pressed)
-int16_t throttle = 32767 - (mouseY * 655.35f);
-int16_t brake = 32767 - ((100 - mouseY) * 655.35f);
+int16_t throttle_val = 32767 - (throttle * 655.35f);
+int16_t brake_val = 32767 - (brake * 655.35f);
 ```
 
 **Why inverted?**
@@ -219,16 +227,17 @@ int16_t brake = 32767 - ((100 - mouseY) * 655.35f);
 - Non-inverted values cause detection as Xbox 360 controller
 
 **Characteristics**:
-- **Accumulative**: Mouse forward → throttle increases, backward → brake increases
-- **Mutually exclusive**: Can't press both pedals fully at once (mouseY is 0-100)
+- **Ramping**: Hold W to increase throttle, hold S to increase brake (3% per frame at 125Hz)
+- **Independent**: Can press both pedals simultaneously (throttle and brake 0-100% each)
+- **Auto-release**: Pedals automatically decrease when keys released
 - **Scaling factor**: 655.35 = 65535 / 100 (converts 0-100 to 0-65535 range)
 - **Inverted output**: Higher percentage = more negative value
 
 ### D-Pad
 
 ```cpp
-dpad_x = key_D - key_A   // D=right (1), A=left (-1), both/neither=0
-dpad_y = key_S - key_W   // S=down (1), W=up (-1), both/neither=0
+dpad_x = key_RIGHT - key_LEFT   // RIGHT=1, LEFT=-1, both/neither=0
+dpad_y = key_DOWN - key_UP      // DOWN=1, UP=-1, both/neither=0
 ```
 
 ### Toggle Detection (Ctrl+M)
@@ -356,7 +365,7 @@ make
 sudo ./wheel-emulator
 
 # Device detection mode (shows available keyboards/mice)
-sudo ./wheel-emulator --detect-devices
+sudo ./wheel-emulator --detect
 
 # Config location
 /etc/wheel-emulator.conf
@@ -420,10 +429,10 @@ sudo ./wheel-emulator --detect-devices
 **Format**:
 ```ini
 # Wheel Emulator Configuration
-# Run with --detect-devices to identify your devices
+# Run with --detect to identify your devices
 
 [devices]
-# Specify exact device paths (use --detect-devices to find them)
+# Specify exact device paths (use --detect to find them)
 # Leave empty for auto-detection
 keyboard=/dev/input/event6
 mouse=/dev/input/event11
@@ -465,15 +474,15 @@ KEY_LEFTSHIFT=BTN_23  # Boost/Nitro
 KEY_SPACE=BTN_24      # Handbrake
 KEY_TAB=BTN_25        # Look left/right
 
-# D-Pad (WASD)
-KEY_W=DPAD_UP
-KEY_S=DPAD_DOWN
-KEY_A=DPAD_LEFT
-KEY_D=DPAD_RIGHT
+# D-Pad (Arrow Keys)
+KEY_UP=DPAD_UP
+KEY_DOWN=DPAD_DOWN
+KEY_LEFT=DPAD_LEFT
+KEY_RIGHT=DPAD_RIGHT
 
-# Pedals (Mouse Y axis)
-# Forward mouse movement = throttle
-# Backward mouse movement = brake
+# Pedals (W/S Keys)
+# Hold W key = increase throttle (0-100%)
+# Hold S key = increase brake (0-100%)
 
 # Steering (Mouse X axis)
 # Left/right mouse movement = steering wheel
@@ -488,7 +497,7 @@ KEY_D=DPAD_RIGHT
 ### First-time Setup
 ```bash
 # Detect keyboard and mouse automatically
-sudo ./wheel-emulator --detect-devices
+sudo ./wheel-emulator --detect
 
 # Follow prompts:
 # 1. Type on keyboard for 5 seconds
