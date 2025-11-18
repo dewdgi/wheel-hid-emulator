@@ -303,10 +303,8 @@ int main(int argc, char* argv[]) {
             gamepad.UpdateButtons(input);
             gamepad.UpdateDPad(input);
             gamepad.SendState();
-        } else {
-            // Send neutral state when disabled
-            gamepad.SendNeutral();
         }
+        // Don't send any reports when disabled - let device stay at last state
         
         // Process UHID events (for FFB and kernel requests)
         gamepad.ProcessUHIDEvents();
