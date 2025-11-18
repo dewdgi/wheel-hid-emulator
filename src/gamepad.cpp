@@ -931,9 +931,7 @@ void GamepadDevice::USBGadgetPollingThread() {
 
 void GamepadDevice::FFBUpdateThread() {
     // This thread continuously applies FFB forces to steering position
-    // FFB forces represent TORQUE/RESISTANCE, not position changes
-    // Constant force = directional torque (simulates road surface, weight transfer)
-    // Autocenter = spring force pulling wheel back to center
+    // Runs independently of mouse input - FFB works even without moving mouse
     
     std::cout << "FFB update thread started" << std::endl;
     
@@ -941,19 +939,15 @@ void GamepadDevice::FFBUpdateThread() {
         {
             std::lock_guard<std::mutex> lock(state_mutex);
             
-            // Apply constant force as torque (pushes steering in direction of force)
-            // Scale down significantly - this is TORQUE not position
+            // Apply constant force from game (resistance/effects)
             if (ffb_force != 0) {
-                // Apply force as small position change (simulates torque at 100Hz)
-                // Negative force pulls left, positive pulls right
-                steering += static_cast<float>(ffb_force) * 0.001f;
+                steering += static_cast<float>(ffb_force) / 100.0f;
             }
             
-            // Apply autocenter spring force (pulls toward center 0)
+            // Apply autocenter spring force
             if (ffb_autocenter > 0) {
-                // Spring force proportional to distance from center
-                // Pulls back toward 0 position
-                float spring_force = -steering * (static_cast<float>(ffb_autocenter) / 65536.0f) * 0.1f;
+                // Spring pulls toward center, strength based on current angle
+                float spring_force = -(steering * static_cast<float>(ffb_autocenter)) / 65536.0f;
                 steering += spring_force;
             }
             
