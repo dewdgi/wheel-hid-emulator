@@ -166,11 +166,10 @@ bool GamepadDevice::Create() {
 
 void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
     // Pure linear steering: each pixel of mouse movement adds to steering
-    // sensitivity directly controls how many steering units per pixel
-    // At sensitivity=50: 50 units per pixel, full lock at 32768/50 = 655 pixels (~7cm at 1000 DPI)
-    // At sensitivity=25: 25 units per pixel, full lock at 32768/25 = 1310 pixels (~14cm at 1000 DPI)
-    // Completely linear scaling
-    steering += delta * static_cast<float>(sensitivity);
+    // Sensitivity scaling adjusted: multiply by 2.5 so sensitivity=20 feels like old 50
+    // At sensitivity=20: 20*2.5 = 50 units per pixel
+    // At sensitivity=50: 50*2.5 = 125 units per pixel (very sensitive)
+    steering += delta * static_cast<float>(sensitivity) * 2.5f;
     
     // Clamp to int16_t range
     if (steering < -32768.0f) steering = -32768.0f;
@@ -245,10 +244,9 @@ void GamepadDevice::SendState() {
     EmitEvent(EV_ABS, ABS_Y, 32767);
     
     // Send throttle and brake as pedal axes (G29 standard)
-    // Real G29 pedals: 32767 at rest (0%), -32768 when fully pressed (100%)
-    // Formula: 32767 - (percentage * 655.35) gives us the range
-    int16_t throttle_val = static_cast<int16_t>(32767 - (throttle * 655.35f));
-    int16_t brake_val = static_cast<int16_t>(32767 - (brake * 655.35f));
+    // Real G29 pedals are inverted: 32767 at rest, -32768 when fully pressed
+    int16_t throttle_val = 32767 - static_cast<int16_t>(throttle * 655.35f);  // 100% = 65535 range
+    int16_t brake_val = 32767 - static_cast<int16_t>(brake * 655.35f);
     
     EmitEvent(EV_ABS, ABS_Z, brake_val);    // Brake pedal
     EmitEvent(EV_ABS, ABS_RZ, throttle_val); // Throttle pedal
