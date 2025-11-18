@@ -37,82 +37,90 @@ GamepadDevice::~GamepadDevice() {
 }
 
 // Logitech G29 HID Report Descriptor
-// This describes the wheel's inputs/outputs to the system
-// Includes OUTPUT reports for Force Feedback (required by hid-lg driver)
+// Based on real G29 wheel descriptor with proper OUTPUT report for hid-lg driver
+// The kernel driver expects OUTPUT report with no report ID (report 0) for FFB commands
 static const uint8_t g29_hid_descriptor[] = {
     0x05, 0x01,        // Usage Page (Generic Desktop)
     0x09, 0x04,        // Usage (Joystick)
     0xA1, 0x01,        // Collection (Application)
     
+    // First collection: Input controls
+    0xA1, 0x02,        //   Collection (Logical)
+    
     // Steering wheel axis
-    0x09, 0x01,        //   Usage (Pointer)
-    0xA1, 0x00,        //   Collection (Physical)
-    0x09, 0x30,        //     Usage (X)
-    0x15, 0x00,        //     Logical Minimum (0)
-    0x27, 0xFF, 0xFF, 0x00, 0x00,  //     Logical Maximum (65535)
-    0x35, 0x00,        //     Physical Minimum (0)
-    0x47, 0xFF, 0xFF, 0x00, 0x00,  //     Physical Maximum (65535)
-    0x75, 0x10,        //     Report Size (16)
-    0x95, 0x01,        //     Report Count (1)
-    0x81, 0x02,        //     Input (Data,Var,Abs)
-    0xC0,              //   End Collection
+    0x09, 0x01,        //     Usage (Pointer)
+    0xA1, 0x00,        //     Collection (Physical)
+    0x09, 0x30,        //       Usage (X)
+    0x15, 0x00,        //       Logical Minimum (0)
+    0x27, 0xFF, 0xFF, 0x00, 0x00,  //       Logical Maximum (65535)
+    0x35, 0x00,        //       Physical Minimum (0)
+    0x47, 0xFF, 0xFF, 0x00, 0x00,  //       Physical Maximum (65535)
+    0x75, 0x10,        //       Report Size (16)
+    0x95, 0x01,        //       Report Count (1)
+    0x81, 0x02,        //       Input (Data,Var,Abs)
+    0xC0,              //     End Collection
     
     // Pedals (3 axes: throttle, brake, clutch)
-    0x09, 0x01,        //   Usage (Pointer)
-    0xA1, 0x00,        //   Collection (Physical)
-    0x09, 0x33,        //     Usage (Rx) - Throttle
-    0x09, 0x34,        //     Usage (Ry) - Brake  
-    0x09, 0x35,        //     Usage (Rz) - Clutch
-    0x15, 0x00,        //     Logical Minimum (0)
-    0x27, 0xFF, 0xFF, 0x00, 0x00,  //     Logical Maximum (65535)
-    0x35, 0x00,        //     Physical Minimum (0)
-    0x47, 0xFF, 0xFF, 0x00, 0x00,  //     Physical Maximum (65535)
-    0x75, 0x10,        //     Report Size (16)
-    0x95, 0x03,        //     Report Count (3)
-    0x81, 0x02,        //     Input (Data,Var,Abs)
-    0xC0,              //   End Collection
+    0x09, 0x01,        //     Usage (Pointer)
+    0xA1, 0x00,        //     Collection (Physical)
+    0x09, 0x33,        //       Usage (Rx) - Throttle
+    0x09, 0x34,        //       Usage (Ry) - Brake  
+    0x09, 0x35,        //       Usage (Rz) - Clutch
+    0x15, 0x00,        //       Logical Minimum (0)
+    0x27, 0xFF, 0xFF, 0x00, 0x00,  //       Logical Maximum (65535)
+    0x35, 0x00,        //       Physical Minimum (0)
+    0x47, 0xFF, 0xFF, 0x00, 0x00,  //       Physical Maximum (65535)
+    0x75, 0x10,        //       Report Size (16)
+    0x95, 0x03,        //       Report Count (3)
+    0x81, 0x02,        //       Input (Data,Var,Abs)
+    0xC0,              //     End Collection
     
     // HAT switch (D-Pad)
-    0x09, 0x39,        //   Usage (Hat switch)
-    0x15, 0x00,        //   Logical Minimum (0)
-    0x25, 0x07,        //   Logical Maximum (7)
-    0x35, 0x00,        //   Physical Minimum (0)
-    0x46, 0x3B, 0x01,  //   Physical Maximum (315)
-    0x65, 0x14,        //   Unit (Degrees)
-    0x75, 0x04,        //   Report Size (4)
-    0x95, 0x01,        //   Report Count (1)
-    0x81, 0x42,        //   Input (Data,Var,Abs,Null)
+    0x09, 0x39,        //     Usage (Hat switch)
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x25, 0x07,        //     Logical Maximum (7)
+    0x35, 0x00,        //     Physical Minimum (0)
+    0x46, 0x3B, 0x01,  //     Physical Maximum (315)
+    0x65, 0x14,        //     Unit (Degrees)
+    0x75, 0x04,        //     Report Size (4)
+    0x95, 0x01,        //     Report Count (1)
+    0x81, 0x42,        //     Input (Data,Var,Abs,Null)
     
     // Padding
-    0x75, 0x04,        //   Report Size (4)
-    0x95, 0x01,        //   Report Count (1)
-    0x81, 0x03,        //   Input (Const,Var,Abs)
+    0x75, 0x04,        //     Report Size (4)
+    0x95, 0x01,        //     Report Count (1)
+    0x81, 0x03,        //     Input (Const,Var,Abs)
     
     // Buttons (25 buttons)
-    0x05, 0x09,        //   Usage Page (Button)
-    0x19, 0x01,        //   Usage Minimum (Button 1)
-    0x29, 0x19,        //   Usage Maximum (Button 25)
-    0x15, 0x00,        //   Logical Minimum (0)
-    0x25, 0x01,        //   Logical Maximum (1)
-    0x75, 0x01,        //   Report Size (1)
-    0x95, 0x19,        //   Report Count (25)
-    0x81, 0x02,        //   Input (Data,Var,Abs)
+    0x05, 0x09,        //     Usage Page (Button)
+    0x19, 0x01,        //     Usage Minimum (Button 1)
+    0x29, 0x19,        //     Usage Maximum (Button 25)
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x25, 0x01,        //     Logical Maximum (1)
+    0x75, 0x01,        //     Report Size (1)
+    0x95, 0x19,        //     Report Count (25)
+    0x81, 0x02,        //     Input (Data,Var,Abs)
     
     // Padding to byte boundary (7 bits)
-    0x75, 0x07,        //   Report Size (7)
-    0x95, 0x01,        //   Report Count (1)
-    0x81, 0x03,        //   Input (Const,Var,Abs)
+    0x75, 0x07,        //     Report Size (7)
+    0x95, 0x01,        //     Report Count (1)
+    0x81, 0x03,        //     Input (Const,Var,Abs)
     
-    // OUTPUT Report - Force Feedback command report (REQUIRED by hid-lg driver)
-    0x06, 0x00, 0xFF,  //   Usage Page (Vendor Defined)
-    0x09, 0x01,        //   Usage (Vendor Usage 1)
-    0x15, 0x00,        //   Logical Minimum (0)
-    0x26, 0xFF, 0x00,  //   Logical Maximum (255)
-    0x75, 0x08,        //   Report Size (8)
-    0x95, 0x3F,        //   Report Count (63)
-    0x91, 0x02,        //   Output (Data,Var,Abs)
+    0xC0,              //   End Collection (Logical)
     
-    0xC0               // End Collection
+    // Second collection: OUTPUT report for Force Feedback
+    // CRITICAL: This must be present for hid-lg driver to bind successfully
+    // The driver checks for HID_OUTPUT_REPORT 0 (no report ID) with 7 bytes
+    0xA1, 0x02,        //   Collection (Logical)
+    0x09, 0x02,        //     Usage (0x02) - FFB usage
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x26, 0xFF, 0x00,  //     Logical Maximum (255)
+    0x95, 0x07,        //     Report Count (7) - REQUIRED: hid-lg expects 7 bytes
+    0x75, 0x08,        //     Report Size (8)
+    0x91, 0x02,        //     Output (Data,Var,Abs)
+    0xC0,              //   End Collection (Logical)
+    
+    0xC0               // End Collection (Application)
 };
 
 bool GamepadDevice::CreateUHID() {
