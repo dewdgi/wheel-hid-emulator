@@ -3,6 +3,8 @@
 #include <unistd.h>
 #include <cstring>
 #include <iostream>
+#include <vector>
+#include <algorithm>
 #include <dirent.h>
 #include <sys/ioctl.h>
 #include <linux/input-event-codes.h>
@@ -74,6 +76,13 @@ bool Input::DiscoverMouse() {
         return false;
     }
     
+    struct MouseCandidate {
+        std::string path;
+        std::string name;
+        int priority;
+    };
+    std::vector<MouseCandidate> candidates;
+    
     struct dirent* entry;
     while ((entry = readdir(dir)) != nullptr) {
         if (strncmp(entry->d_name, "event", 5) != 0) {
@@ -94,18 +103,62 @@ bool Input::DiscoverMouse() {
             char name[256] = "Unknown";
             ioctl(fd, EVIOCGNAME(sizeof(name)), name);
             
-            mouse_fd = fd;
-            std::cout << "Found mouse: " << name << " at " << path << std::endl;
-            closedir(dir);
-            return true;
+            std::string name_lower = name;
+            for (char& c : name_lower) {
+                c = tolower(c);
+            }
+            
+            // Prioritize: avoid touchpads and virtual devices
+            int priority = 50; // default
+            
+            // Deprioritize touchpads
+            if (name_lower.find("touchpad") != std::string::npos) {
+                priority = 10;
+            }
+            // Deprioritize virtual/internal mouse devices from touchpads
+            else if (name_lower.find("uniw") != std::string::npos || 
+                     name_lower.find("elan") != std::string::npos ||
+                     name_lower.find("synaptics") != std::string::npos) {
+                priority = 20;
+            }
+            // Prioritize USB/wireless mice
+            else if (name_lower.find("wireless") != std::string::npos ||
+                     name_lower.find("usb") != std::string::npos ||
+                     name_lower.find("beken") != std::string::npos ||
+                     name_lower.find("logitech") != std::string::npos ||
+                     name_lower.find("razer") != std::string::npos) {
+                priority = 100;
+            }
+            
+            candidates.push_back({path, name, priority});
         }
         
         close(fd);
     }
     
     closedir(dir);
-    std::cerr << "No mouse found" << std::endl;
-    return false;
+    
+    if (candidates.empty()) {
+        std::cerr << "No mouse found" << std::endl;
+        return false;
+    }
+    
+    // Sort by priority (highest first)
+    std::sort(candidates.begin(), candidates.end(), 
+              [](const MouseCandidate& a, const MouseCandidate& b) {
+                  return a.priority > b.priority;
+              });
+    
+    // Use the highest priority device
+    auto& best = candidates[0];
+    mouse_fd = open(best.path.c_str(), O_RDONLY | O_NONBLOCK);
+    if (mouse_fd < 0) {
+        std::cerr << "Failed to open mouse: " << best.path << std::endl;
+        return false;
+    }
+    
+    std::cout << "Found mouse: " << best.name << " at " << best.path << std::endl;
+    return true;
 }
 
 void Input::Read(int& mouse_dx) {

@@ -113,6 +113,12 @@ Bit manipulation macros (for capability checking):
 
 Keyboard discovery: enumerate /dev/input/event*, check name via EVIOCGNAME
 Mouse discovery: enumerate /dev/input/event*, check REL_X via EVIOCGBIT
+  - Priority-based selection to avoid touchpads/virtual devices:
+    * Priority 100: Wireless/USB mice (Beken, Logitech, Razer, etc.)
+    * Priority 50:  Generic devices with REL_X
+    * Priority 20:  Virtual mouse devices from touchpads (UNIW, ELAN, Synaptics)
+    * Priority 10:  Touchpad devices
+  - Selects highest priority device automatically
 Events read non-blocking (O_NONBLOCK), all pending events consumed per cycle
 Keys stored as bool array indexed by event.code (KEY_W, KEY_S, KEY_LEFTCTRL, etc.)
 Key state accessed via IsKeyPressed() for encapsulation
