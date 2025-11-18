@@ -487,15 +487,6 @@ void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
     // Convert mouse delta to steering angle with sensitivity
     float scaled_delta = delta * static_cast<float>(sensitivity) * 0.2f;
     
-    // Apply FFB constant force as resistance to steering input
-    // The FFB force counteracts/assists the mouse movement
-    // Negative force = pull left, positive = pull right
-    if (ffb_force != 0) {
-        // FFB force modifies how much the mouse input affects steering
-        // Scale down the force significantly - it's resistance, not movement
-        scaled_delta -= static_cast<float>(ffb_force) * 0.0001f;
-    }
-    
     steering += scaled_delta;
     
     // Clamp to int16_t range
@@ -946,8 +937,8 @@ void GamepadDevice::USBGadgetPollingThread() {
 
 void GamepadDevice::FFBUpdateThread() {
     // This thread continuously applies FFB forces to steering position
-    // FFB represents TORQUE that should affect the wheel position
-    // The force value from the game is the CURRENT force, not a delta
+    // FFB force represents directional torque that should move the wheel
+    // Applied every frame regardless of mouse input
     
     std::cout << "FFB update thread started" << std::endl;
     
@@ -955,13 +946,15 @@ void GamepadDevice::FFBUpdateThread() {
         {
             std::lock_guard<std::mutex> lock(state_mutex);
             
-            // DON'T accumulate forces - they represent current torque state
-            // Only apply autocenter spring which pulls toward neutral
+            // Apply constant force directly - NO SCALING
+            if (ffb_force != 0) {
+                steering += static_cast<float>(ffb_force);
+            }
             
             // Apply autocenter spring force (pulls toward center 0)
             if (ffb_autocenter > 0) {
                 // Spring force proportional to distance from center
-                float spring_force = -(steering * static_cast<float>(ffb_autocenter)) / 65536.0f * 0.05f;
+                float spring_force = -(steering * static_cast<float>(ffb_autocenter)) / 65536.0f;
                 steering += spring_force;
             }
             
