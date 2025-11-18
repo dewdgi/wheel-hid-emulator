@@ -39,18 +39,6 @@ bool GamepadDevice::Create() {
     ioctl(fd, UI_SET_KEYBIT, BTN_SELECT);
     ioctl(fd, UI_SET_KEYBIT, BTN_START);
     
-    // Enable all absolute axes we'll use
-    ioctl(fd, UI_SET_ABSBIT, ABS_X);
-    ioctl(fd, UI_SET_ABSBIT, ABS_Y);
-    ioctl(fd, UI_SET_ABSBIT, ABS_Z);
-    ioctl(fd, UI_SET_ABSBIT, ABS_RX);
-    ioctl(fd, UI_SET_ABSBIT, ABS_RY);
-    ioctl(fd, UI_SET_ABSBIT, ABS_RZ);
-    ioctl(fd, UI_SET_ABSBIT, ABS_GAS);
-    ioctl(fd, UI_SET_ABSBIT, ABS_BRAKE);
-    ioctl(fd, UI_SET_ABSBIT, ABS_HAT0X);
-    ioctl(fd, UI_SET_ABSBIT, ABS_HAT0Y);
-    
     // Setup axes
     struct uinput_abs_setup abs_setup;
     

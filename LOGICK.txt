@@ -152,7 +152,6 @@ class GamepadDevice {
 
 Virtual device: VID=0x045e, PID=0x028e, name="Xbox 360 Controller"
 Axes (all configured for full compatibility):
-  - All axes explicitly enabled via UI_SET_ABSBIT before UI_ABS_SETUP
   - ABS_X:     Left stick X (steering, -32768 to 32767)
   - ABS_Y:     Left stick Y (unused, always 0)
   - ABS_RX:    Right stick X (unused, always 0)
@@ -165,7 +164,6 @@ Axes (all configured for full compatibility):
 Buttons: BTN_A/B/X/Y, BTN_TL/TR (bumpers), BTN_SELECT/START
 
 Note: Throttle/brake sent to both trigger AND pedal axes for maximum compatibility
-Device setup requires UI_SET_ABSBIT to enable axes before UI_ABS_SETUP configures them
 
 MAIN LOOP (main.cpp)
 --------------------
