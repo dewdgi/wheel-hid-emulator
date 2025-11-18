@@ -2,6 +2,7 @@
 #define INPUT_H
 
 #include <linux/input.h>
+#include <string>
 
 class Input {
 public:
@@ -9,8 +10,9 @@ public:
     ~Input();
     
     // Discover and open input devices
-    bool DiscoverKeyboard();
-    bool DiscoverMouse();
+    // If device_path is provided, use it directly; otherwise auto-detect
+    bool DiscoverKeyboard(const std::string& device_path = "");
+    bool DiscoverMouse(const std::string& device_path = "");
     
     // Read events from keyboard and mouse
     void Read(int& mouse_dx);

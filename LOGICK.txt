@@ -13,20 +13,21 @@ FILES
 -----
 Makefile          - Build configuration
 src/
-  main.cpp        - Entry point, main loop, signal handling
-  config.h/cpp    - Configuration loading
+  main.cpp        - Entry point, main loop, signal handling, device detection
+  config.h/cpp    - Configuration loading with device paths
   input.h/cpp     - Keyboard/mouse reading, device discovery
   gamepad.h/cpp   - Virtual gamepad device
 
 COMPONENTS
 ----------
 Config:
-  - Loads INI file (~/.config/wheel-emulator.conf or /etc/wheel-emulator.conf)
-  - Stores sensitivity + button mappings
+  - Loads INI file from /etc/wheel-emulator.conf ONLY
+  - Stores sensitivity, device paths, and button mappings
   - Auto-generates default if missing
+  - Can update device paths via UpdateDevices()
 
 Input:
-  - Auto-discovers keyboard/mouse via /dev/input/event*
+  - Discovers devices via explicit paths (from config) OR auto-detection
   - Reads events into key state map
   - Detects Ctrl+M toggle
   - Grabs/ungrabs devices
@@ -46,12 +47,28 @@ Gamepad:
 PROGRAM FLOW
 =============================================================================
 
-Startup:
+Detection Mode (--detect flag):
   1. Check root privileges
-  2. Load config (find file, parse INI, generate default if needed)
+  2. Open all /dev/input/event* devices
+  3. Filter devices by capabilities (keyboard keys, REL_X for mouse)
+  4. Monitor keyboard devices for 5 seconds while user types
+  5. Count key press events per device
+  6. Monitor mouse devices for 5 seconds while user moves mouse
+  7. Count REL_X movement events per device
+  8. Select devices with most events as best candidates
+  9. Automatically update /etc/wheel-emulator.conf with detected paths
+  10. Exit
+
+Normal Mode:
+  1. Check root privileges
+  2. Load config from /etc/wheel-emulator.conf (create if missing)
   3. Create virtual gamepad (/dev/uinput)
-  4. Discover keyboard (search for "keyboard" in device name)
-  5. Discover mouse (search for REL_X capability)
+  4. Discover keyboard:
+     - If keyboard_device path in config: use it directly
+     - Otherwise: auto-detect (priority-based search)
+  5. Discover mouse:
+     - If mouse_device path in config: use it directly
+     - Otherwise: auto-detect (priority-based search)
   6. Start with emulation disabled (devices NOT grabbed)
 
 Main Loop:
@@ -83,16 +100,24 @@ CONFIG (config.h/cpp)
 ---------------------
 struct Config {
     int sensitivity = 20;
+    std::string keyboard_device;  // e.g. "/dev/input/event6"
+    std::string mouse_device;     // e.g. "/dev/input/event11"
     std::map<std::string, int> button_map;
     
-    bool Load();  // Finds file, parses INI, returns success
+    bool Load();  // Loads from /etc/wheel-emulator.conf only
     void SaveDefault(const char* path);
+    bool UpdateDevices(kbd_path, mouse_path);  // Update config with detected devices
 };
 
-File search priority: ~/.config/wheel-emulator.conf → /etc/wheel-emulator.conf
-INI format: [sensitivity] sensitivity=20, [button_mapping] key=button
-Auto-generates default if neither exists
+File location: /etc/wheel-emulator.conf ONLY (no ~/.config fallback)
+INI format sections:
+  [devices]         - keyboard=/dev/input/eventX, mouse=/dev/input/eventY
+  [sensitivity]     - sensitivity=20
+  [button_mapping]  - KEY_Q=BTN_A, etc.
+Auto-generates default if missing
 Validation: Sensitivity clamped to range [1, 100] during parsing
+Supported buttons: BTN_A, BTN_B, BTN_X, BTN_Y, BTN_TL, BTN_TR, 
+                   BTN_SELECT, BTN_START, BTN_THUMBL, BTN_THUMBR, BTN_MODE
 
 INPUT (input.h/cpp)
 -------------------
@@ -101,29 +126,26 @@ class Input {
     bool keys[KEY_MAX] = {false};  // Direct array indexed by KEY_* codes
     bool prev_toggle = false;
     
-    bool DiscoverKeyboard();  // Find device with "keyboard" in name
-    bool DiscoverMouse();     // Find device with REL_X capability
+    bool DiscoverKeyboard(device_path = "");  // Use path if provided, else auto-detect
+    bool DiscoverMouse(device_path = "");     // Use path if provided, else auto-detect
     void Read(int& mouse_dx); // Read events, update keys, accumulate mouse
     bool CheckToggle();       // Detect Ctrl+M edge, return true if toggled
     void Grab(bool enable);   // EVIOCGRAB for exclusive access
     bool IsKeyPressed(int keycode) const;  // Encapsulated key state access
 };
 
-Bit manipulation macros (for capability checking):
-  #define BITS_PER_LONG (sizeof(long) * 8)
-  #define NBITS(x) ((((x)-1)/BITS_PER_LONG)+1)
-  #define OFF(x)  ((x)%BITS_PER_LONG)
-  #define BIT(x)  (1UL<<OFF(x))
-  #define LONG(x) ((x)/BITS_PER_LONG)
-  #define test_bit(bit, array) ((array[LONG(bit)] >> OFF(bit)) & 1)
+Explicit device usage:
+  - If device_path provided: open it directly, no auto-detection
+  - If empty: perform auto-detection with priority system
 
-Keyboard discovery: enumerate /dev/input/event*, check name via EVIOCGNAME
+Keyboard auto-detection: enumerate /dev/input/event*, check name via EVIOCGNAME
   - Priority-based selection:
     * Priority 100: Actual keyboard devices (name contains " keyboard")
     * Priority 50:  Generic devices with "keyboard" in name
     * Priority 10:  Consumer Control, System Control devices
   - Selects highest priority keyboard automatically
-Mouse discovery: enumerate /dev/input/event*, check REL_X via EVIOCGBIT
+  
+Mouse auto-detection: enumerate /dev/input/event*, check REL_X via EVIOCGBIT
   - Excludes keyboard devices that have pointer capabilities
   - Priority-based selection to avoid touchpads/virtual devices:
     * Priority 100: Real mice ("mouse", "wireless device", "beken")
@@ -132,6 +154,7 @@ Mouse discovery: enumerate /dev/input/event*, check REL_X via EVIOCGBIT
     * Priority 10:  Touchpad devices
     * Priority 5:   Consumer Control, System Control devices
   - Selects highest priority device automatically
+  
 Events read non-blocking (O_NONBLOCK), all pending events consumed per cycle
 Keys stored as bool array indexed by event.code (KEY_W, KEY_S, KEY_LEFTCTRL, etc.)
 Key state accessed via IsKeyPressed() for encapsulation
@@ -167,7 +190,32 @@ Axes (matching real Xbox 360 controller):
   - ABS_Z:     Left trigger (brake, 0-255)
   - ABS_RZ:    Right trigger (throttle, 0-255)
   - ABS_HAT0X/Y: D-Pad (-1, 0, 1)
-Buttons: BTN_A/B/X/Y, BTN_TL/TR (bumpers), BTN_SELECT/START
+Buttons: BTN_A/B/X/Y, BTN_TL/TR (bumpers), BTN_SELECT/START, 
+         BTN_THUMBL/THUMBR (stick clicks), BTN_MODE (Xbox button)
+
+DETECTION MODE (main.cpp)
+-------------------------
+Interactive device detection via --detect flag:
+1. Opens all /dev/input/event* devices non-blocking
+2. Checks capabilities via EVIOCGBIT:
+   - has_keys: device has EV_KEY with KEY_A or KEY_SPACE (actual keyboard)
+   - has_rel_x: device has EV_REL with REL_X (mouse movement)
+3. Keyboard detection phase (5 seconds):
+   - User prompted to type keys
+   - Monitors all keyboard-capable devices
+   - Counts key press events (EV_KEY with value=1)
+   - Selects device with most key presses
+4. Mouse detection phase (5 seconds):
+   - User prompted to move mouse
+   - Monitors all mouse-capable devices
+   - Counts REL_X movement events
+   - Selects device with most movements
+5. Automatic config update:
+   - Loads existing /etc/wheel-emulator.conf (creates if missing)
+   - Calls config.UpdateDevices(kbd_path, mouse_path)
+   - Updates keyboard= and mouse= lines in [devices] section
+   - Writes updated config back to /etc/wheel-emulator.conf
+6. Outputs detected devices and success/failure message
 
 MAIN LOOP (main.cpp)
 --------------------
@@ -241,6 +289,23 @@ Ctrl+M → Toggle enable/disable
 Ctrl+C → Exit
 
 =============================================================================
+USAGE
+=============================================================================
+
+First-time setup:
+  sudo ./wheel-emulator --detect    # Interactive device detection
+                                     # Automatically updates /etc/wheel-emulator.conf
+
+Normal usage:
+  sudo ./wheel-emulator              # Run with configured devices
+  
+Manual configuration:
+  Edit /etc/wheel-emulator.conf:
+    [devices]
+    keyboard=/dev/input/event6
+    mouse=/dev/input/event11
+
+=============================================================================
 BUILD SYSTEM
 =============================================================================
 
@@ -274,3 +339,4 @@ Usage:
   make install  - Install to /usr/local/bin (requires root)
 
 =============================================================================
+

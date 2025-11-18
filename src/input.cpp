@@ -26,7 +26,22 @@ Input::~Input() {
     CloseDevice(mouse_fd);
 }
 
-bool Input::DiscoverKeyboard() {
+bool Input::DiscoverKeyboard(const std::string& device_path) {
+    // If explicit device path provided, use it
+    if (!device_path.empty()) {
+        kbd_fd = open(device_path.c_str(), O_RDONLY | O_NONBLOCK);
+        if (kbd_fd < 0) {
+            std::cerr << "Failed to open keyboard device: " << device_path << std::endl;
+            return false;
+        }
+        
+        char name[256] = "Unknown";
+        ioctl(kbd_fd, EVIOCGNAME(sizeof(name)), name);
+        std::cout << "Using configured keyboard: " << name << " at " << device_path << std::endl;
+        return true;
+    }
+    
+    // Otherwise, auto-detect
     DIR* dir = opendir("/dev/input");
     if (!dir) {
         std::cerr << "Failed to open /dev/input" << std::endl;
@@ -105,7 +120,22 @@ bool Input::DiscoverKeyboard() {
     return true;
 }
 
-bool Input::DiscoverMouse() {
+bool Input::DiscoverMouse(const std::string& device_path) {
+    // If explicit device path provided, use it
+    if (!device_path.empty()) {
+        mouse_fd = open(device_path.c_str(), O_RDONLY | O_NONBLOCK);
+        if (mouse_fd < 0) {
+            std::cerr << "Failed to open mouse device: " << device_path << std::endl;
+            return false;
+        }
+        
+        char name[256] = "Unknown";
+        ioctl(mouse_fd, EVIOCGNAME(sizeof(name)), name);
+        std::cout << "Using configured mouse: " << name << " at " << device_path << std::endl;
+        return true;
+    }
+    
+    // Otherwise, auto-detect
     DIR* dir = opendir("/dev/input");
     if (!dir) {
         std::cerr << "Failed to open /dev/input" << std::endl;

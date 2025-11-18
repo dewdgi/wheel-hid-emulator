@@ -7,6 +7,8 @@
 class Config {
 public:
     int sensitivity = 20;
+    std::string keyboard_device;  // e.g. "/dev/input/event6"
+    std::string mouse_device;     // e.g. "/dev/input/event11"
     std::map<std::string, int> button_map;
     
     // Load configuration from default locations
@@ -15,6 +17,9 @@ public:
     
     // Save default configuration to specified path
     void SaveDefault(const char* path);
+    
+    // Update device paths in existing config
+    bool UpdateDevices(const std::string& kbd_path, const std::string& mouse_path);
 
 private:
     bool LoadFromFile(const char* path);
