@@ -8,7 +8,7 @@
 #include <linux/input-event-codes.h>
 
 GamepadDevice::GamepadDevice() 
-    : fd(-1), mouse_position(0), steering(0), throttle(0.0f), brake(0.0f), dpad_x(0), dpad_y(0) {
+    : fd(-1), steering(0), throttle(0.0f), brake(0.0f), dpad_x(0), dpad_y(0) {
 }
 
 GamepadDevice::~GamepadDevice() {
@@ -123,32 +123,17 @@ bool GamepadDevice::Create() {
 }
 
 void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
-    // Accumulate mouse position
-    mouse_position += delta;
-    
-    // Auto-center: decay mouse position towards 0 when no input
-    // This creates a "spring" effect that returns to center
-    float decay_rate = 0.95f;  // 5% decay per frame (at 1000 Hz = very smooth)
-    mouse_position *= decay_rate;
-    
-    // Convert mouse position to steering with linear scaling
+    // Direct linear steering: mouse movement directly controls steering
+    // No accumulation, no auto-centering - just direct mapping
     // At 1000 DPI, 15cm = ~5905 pixels
-    // We want sensitivity=50 to reach full lock at ~15cm
-    // So: pixels_for_full_lock = 5905 * (50 / sensitivity)
-    // steering = mouse_position * (32768 / pixels_for_full_lock)
-    // Simplified: steering = mouse_position * sensitivity * 0.111
-    float multiplier = sensitivity * 0.111f;
-    steering = mouse_position * multiplier;
+    // At sensitivity=50: full lock at ~15cm
+    // Formula: delta * sensitivity * 0.111 gives direct steering change
+    float delta_steering = delta * sensitivity * 0.111f;
+    steering += delta_steering;
     
     // Clamp to int16_t range
-    if (steering < -32768.0f) {
-        steering = -32768.0f;
-        mouse_position = -32768.0f / multiplier;  // Clamp mouse pos too
-    }
-    if (steering > 32767.0f) {
-        steering = 32767.0f;
-        mouse_position = 32767.0f / multiplier;
-    }
+    if (steering < -32768.0f) steering = -32768.0f;
+    if (steering > 32767.0f) steering = 32767.0f;
 }
 
 void GamepadDevice::UpdateThrottle(bool pressed) {

@@ -30,8 +30,7 @@ private:
     int fd;
     
     // State
-    float mouse_position;  // Accumulated mouse position for steering
-    float steering;  // Calculated steering value from mouse position
+    float steering;
     float throttle;
     float brake;
     std::map<std::string, bool> buttons;
