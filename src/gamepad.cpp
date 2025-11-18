@@ -194,7 +194,8 @@ void GamepadDevice::UpdateBrake(bool pressed) {
 }
 
 void GamepadDevice::UpdateButtons(const Input& input) {
-    // Map keyboard keys to wheel buttons (joystick style)
+    // Map keyboard keys to wheel buttons (all 25 buttons for G29)
+    // Primary buttons (1-12)
     buttons["BTN_TRIGGER"] = input.IsKeyPressed(KEY_Q);
     buttons["BTN_THUMB"] = input.IsKeyPressed(KEY_E);
     buttons["BTN_THUMB2"] = input.IsKeyPressed(KEY_F);
@@ -207,6 +208,21 @@ void GamepadDevice::UpdateButtons(const Input& input) {
     buttons["BTN_BASE4"] = input.IsKeyPressed(KEY_I);
     buttons["BTN_BASE5"] = input.IsKeyPressed(KEY_O);
     buttons["BTN_BASE6"] = input.IsKeyPressed(KEY_P);
+    
+    // Additional buttons (13-25)
+    buttons["BTN_DEAD"] = input.IsKeyPressed(KEY_1);
+    buttons["BTN_TRIGGER_HAPPY1"] = input.IsKeyPressed(KEY_2);
+    buttons["BTN_TRIGGER_HAPPY2"] = input.IsKeyPressed(KEY_3);
+    buttons["BTN_TRIGGER_HAPPY3"] = input.IsKeyPressed(KEY_4);
+    buttons["BTN_TRIGGER_HAPPY4"] = input.IsKeyPressed(KEY_5);
+    buttons["BTN_TRIGGER_HAPPY5"] = input.IsKeyPressed(KEY_6);
+    buttons["BTN_TRIGGER_HAPPY6"] = input.IsKeyPressed(KEY_7);
+    buttons["BTN_TRIGGER_HAPPY7"] = input.IsKeyPressed(KEY_8);
+    buttons["BTN_TRIGGER_HAPPY8"] = input.IsKeyPressed(KEY_9);
+    buttons["BTN_TRIGGER_HAPPY9"] = input.IsKeyPressed(KEY_0);
+    buttons["BTN_TRIGGER_HAPPY10"] = input.IsKeyPressed(KEY_LEFTSHIFT);
+    buttons["BTN_TRIGGER_HAPPY11"] = input.IsKeyPressed(KEY_SPACE);
+    buttons["BTN_TRIGGER_HAPPY12"] = input.IsKeyPressed(KEY_TAB);
 }
 
 void GamepadDevice::UpdateDPad(const Input& input) {
@@ -249,20 +265,19 @@ void GamepadDevice::SendState() {
     EmitEvent(EV_KEY, BTN_BASE4, buttons["BTN_BASE4"] ? 1 : 0);
     EmitEvent(EV_KEY, BTN_BASE5, buttons["BTN_BASE5"] ? 1 : 0);
     EmitEvent(EV_KEY, BTN_BASE6, buttons["BTN_BASE6"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_DEAD, 0);  // Button 13 - always off
-    // Buttons 14-25 (unused but required for G29 compatibility)
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY1, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY2, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY3, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY4, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY5, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY6, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY7, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY8, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY9, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY10, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY11, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY12, 0);
+    EmitEvent(EV_KEY, BTN_DEAD, buttons["BTN_DEAD"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY1, buttons["BTN_TRIGGER_HAPPY1"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY2, buttons["BTN_TRIGGER_HAPPY2"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY3, buttons["BTN_TRIGGER_HAPPY3"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY4, buttons["BTN_TRIGGER_HAPPY4"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY5, buttons["BTN_TRIGGER_HAPPY5"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY6, buttons["BTN_TRIGGER_HAPPY6"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY7, buttons["BTN_TRIGGER_HAPPY7"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY8, buttons["BTN_TRIGGER_HAPPY8"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY9, buttons["BTN_TRIGGER_HAPPY9"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY10, buttons["BTN_TRIGGER_HAPPY10"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY11, buttons["BTN_TRIGGER_HAPPY11"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY12, buttons["BTN_TRIGGER_HAPPY12"] ? 1 : 0);
     
     // Send D-Pad
     EmitEvent(EV_ABS, ABS_HAT0X, dpad_x);
