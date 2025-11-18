@@ -13,7 +13,7 @@
 
 GamepadDevice::GamepadDevice() 
     : fd(-1), use_uhid(false), use_gadget(false), gadget_running(false), steering(0), throttle(0.0f), brake(0.0f), dpad_x(0), dpad_y(0),
-      ffb_force(0), ffb_autocenter(0), ffb_enabled(true) {
+      ffb_force(0), ffb_autocenter(0), ffb_enabled(true), user_torque(0.0f) {
 }
 
 GamepadDevice::~GamepadDevice() {
@@ -484,14 +484,13 @@ bool GamepadDevice::CreateUInput() {
 void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
     std::lock_guard<std::mutex> lock(state_mutex);
     
-    // Convert mouse delta to steering angle with sensitivity
-    float scaled_delta = delta * static_cast<float>(sensitivity) * 0.2f;
+    // Mouse input creates user torque (force applied by user)
+    // This fights against FFB force - user torque vs game FFB
+    float torque_delta = delta * static_cast<float>(sensitivity) * 50.0f;
+    user_torque += torque_delta;
     
-    steering += scaled_delta;
-    
-    // Clamp to int16_t range
-    if (steering < -32768.0f) steering = -32768.0f;
-    if (steering > 32767.0f) steering = 32767.0f;
+    // User torque decays quickly (hand relaxes)
+    user_torque *= 0.9f;
 }
 
 void GamepadDevice::UpdateThrottle(bool pressed) {
@@ -936,33 +935,52 @@ void GamepadDevice::USBGadgetPollingThread() {
 }
 
 void GamepadDevice::FFBUpdateThread() {
-    // This thread continuously applies FFB forces to steering position
-    // FFB force is a TORQUE value, not position delta
-    // It should create a slow drift/pull, not instant position change
+    // Physics simulation: steering is determined by forces
+    // - FFB force from game (road feedback, tire grip, etc)
+    // - User torque from mouse (human turning the wheel)
+    // - Autocenter spring (wheel wants to return to center)
     
     std::cout << "FFB update thread started" << std::endl;
+    
+    float velocity = 0.0f;  // Current wheel rotation speed
     
     while (ffb_running) {
         {
             std::lock_guard<std::mutex> lock(state_mutex);
             
-            // Apply FFB force as torque - it creates gradual position change
-            // The force represents how hard the wheel is being pulled
-            // Scale by 0.0001 so max force (32767) = ~3.3 units per frame
-            if (ffb_force != 0) {
-                steering += static_cast<float>(ffb_force) * 0.0001f;
-            }
+            // Calculate total torque acting on wheel
+            float total_torque = 0.0f;
             
-            // Apply autocenter spring force (pulls toward center 0)
+            // Add FFB force from game
+            total_torque += static_cast<float>(ffb_force);
+            
+            // Add user input torque (mouse)
+            total_torque += user_torque;
+            
+            // Add autocenter spring force
             if (ffb_autocenter > 0) {
-                // Spring force proportional to distance from center
-                float spring_force = -(steering * static_cast<float>(ffb_autocenter)) / 65536.0f;
-                steering += spring_force;
+                float spring = -(steering * static_cast<float>(ffb_autocenter)) / 32768.0f;
+                total_torque += spring;
             }
             
-            // Clamp to int16_t range
-            if (steering < -32768.0f) steering = -32768.0f;
-            if (steering > 32767.0f) steering = 32767.0f;
+            // Torque changes velocity (F=ma)
+            velocity += total_torque * 0.0001f;  // Acceleration from torque
+            
+            // Damping/friction slows wheel down
+            velocity *= 0.95f;
+            
+            // Velocity changes position
+            steering += velocity;
+            
+            // Clamp to limits
+            if (steering < -32768.0f) {
+                steering = -32768.0f;
+                velocity = 0.0f;
+            }
+            if (steering > 32767.0f) {
+                steering = 32767.0f;
+                velocity = 0.0f;
+            }
         }
         
         // Update at ~100Hz (10ms per frame)

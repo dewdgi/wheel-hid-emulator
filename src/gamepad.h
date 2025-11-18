@@ -54,9 +54,10 @@ private:
     int8_t dpad_y;
     
     // Force Feedback state
-    int16_t ffb_force;           // Current FFB force (-32768 to 32767)
+    int16_t ffb_force;           // Current FFB force from game (-32768 to 32767)
     int16_t ffb_autocenter;      // Autocenter spring strength
     bool ffb_enabled;
+    float user_torque;           // User input torque (from mouse)
     
     // UHID methods
     bool CreateUHID();
