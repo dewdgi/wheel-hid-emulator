@@ -937,8 +937,8 @@ void GamepadDevice::USBGadgetPollingThread() {
 
 void GamepadDevice::FFBUpdateThread() {
     // This thread continuously applies FFB forces to steering position
-    // FFB force represents directional torque that should move the wheel
-    // Applied every frame regardless of mouse input
+    // FFB force is a TORQUE value, not position delta
+    // It should create a slow drift/pull, not instant position change
     
     std::cout << "FFB update thread started" << std::endl;
     
@@ -946,9 +946,11 @@ void GamepadDevice::FFBUpdateThread() {
         {
             std::lock_guard<std::mutex> lock(state_mutex);
             
-            // Apply constant force directly - NO SCALING
+            // Apply FFB force as torque - it creates gradual position change
+            // The force represents how hard the wheel is being pulled
+            // Scale by 0.0001 so max force (32767) = ~3.3 units per frame
             if (ffb_force != 0) {
-                steering += static_cast<float>(ffb_force);
+                steering += static_cast<float>(ffb_force) * 0.0001f;
             }
             
             // Apply autocenter spring force (pulls toward center 0)
