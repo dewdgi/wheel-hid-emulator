@@ -484,13 +484,9 @@ bool GamepadDevice::CreateUInput() {
 void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
     std::lock_guard<std::mutex> lock(state_mutex);
     
-    // Mouse input creates user torque (force applied by user)
-    // This fights against FFB force - user torque vs game FFB
-    float torque_delta = delta * static_cast<float>(sensitivity) * 50.0f;
-    user_torque += torque_delta;
-    
-    // User torque decays quickly (hand relaxes)
-    user_torque *= 0.9f;
+    // Mouse input directly sets user torque (not accumulated)
+    // Each mouse movement is immediate force, doesn't build up
+    user_torque = delta * static_cast<float>(sensitivity) * 200.0f;
 }
 
 void GamepadDevice::UpdateThrottle(bool pressed) {
