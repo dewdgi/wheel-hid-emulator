@@ -236,7 +236,7 @@ void GamepadDevice::SendState() {
     EmitEvent(EV_ABS, ABS_Z, brake_val);    // Brake pedal
     EmitEvent(EV_ABS, ABS_RZ, throttle_val); // Throttle pedal
     
-    // Send wheel buttons (joystick style - 12 primary buttons)
+    // Send wheel buttons (joystick style - all 25 buttons to match real G29)
     EmitEvent(EV_KEY, BTN_TRIGGER, buttons["BTN_TRIGGER"] ? 1 : 0);
     EmitEvent(EV_KEY, BTN_THUMB, buttons["BTN_THUMB"] ? 1 : 0);
     EmitEvent(EV_KEY, BTN_THUMB2, buttons["BTN_THUMB2"] ? 1 : 0);
@@ -249,6 +249,20 @@ void GamepadDevice::SendState() {
     EmitEvent(EV_KEY, BTN_BASE4, buttons["BTN_BASE4"] ? 1 : 0);
     EmitEvent(EV_KEY, BTN_BASE5, buttons["BTN_BASE5"] ? 1 : 0);
     EmitEvent(EV_KEY, BTN_BASE6, buttons["BTN_BASE6"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_DEAD, 0);  // Button 13 - always off
+    // Buttons 14-25 (unused but required for G29 compatibility)
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY1, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY2, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY3, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY4, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY5, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY6, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY7, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY8, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY9, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY10, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY11, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY12, 0);
     
     // Send D-Pad
     EmitEvent(EV_ABS, ABS_HAT0X, dpad_x);
@@ -274,7 +288,7 @@ void GamepadDevice::SendNeutral() {
     EmitEvent(EV_ABS, ABS_Z, 32767);
     EmitEvent(EV_ABS, ABS_RZ, 32767);
     
-    // Zero all buttons
+    // Zero all 25 buttons
     EmitEvent(EV_KEY, BTN_TRIGGER, 0);
     EmitEvent(EV_KEY, BTN_THUMB, 0);
     EmitEvent(EV_KEY, BTN_THUMB2, 0);
@@ -287,6 +301,19 @@ void GamepadDevice::SendNeutral() {
     EmitEvent(EV_KEY, BTN_BASE4, 0);
     EmitEvent(EV_KEY, BTN_BASE5, 0);
     EmitEvent(EV_KEY, BTN_BASE6, 0);
+    EmitEvent(EV_KEY, BTN_DEAD, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY1, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY2, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY3, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY4, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY5, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY6, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY7, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY8, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY9, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY10, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY11, 0);
+    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY12, 0);
     
     // Zero D-Pad
     EmitEvent(EV_ABS, ABS_HAT0X, 0);
