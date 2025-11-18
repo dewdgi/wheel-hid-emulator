@@ -47,31 +47,32 @@ static const uint8_t g29_hid_descriptor[] = {
     // First collection: Input controls
     0xA1, 0x02,        //   Collection (Logical)
     
-    // Steering wheel axis
+    // Axes collection - MUST include X, Y, Z, Rz to match real G29
     0x09, 0x01,        //     Usage (Pointer)
     0xA1, 0x00,        //     Collection (Physical)
-    0x09, 0x30,        //       Usage (X)
+    0x09, 0x30,        //       Usage (X) - Steering
+    0x09, 0x31,        //       Usage (Y) - Unused (constant)
+    0x09, 0x32,        //       Usage (Z) - Brake
+    0x09, 0x35,        //       Usage (Rz) - Throttle
+    0x15, 0x00,        //       Logical Minimum (0)
+    0x27, 0xFF, 0xFF, 0x00, 0x00,  //       Logical Maximum (65535)
+    0x35, 0x00,        //       Physical Minimum (0)
+    0x47, 0xFF, 0xFF, 0x00, 0x00,  //       Physical Maximum (65535)
+    0x75, 0x10,        //       Report Size (16)
+    0x95, 0x04,        //       Report Count (4) - X, Y, Z, Rz
+    0x81, 0x02,        //       Input (Data,Var,Abs)
+    0xC0,              //     End Collection
+    
+    // Clutch axis (Rx)
+    0x09, 0x01,        //     Usage (Pointer)
+    0xA1, 0x00,        //     Collection (Physical)
+    0x09, 0x33,        //       Usage (Rx) - Clutch
     0x15, 0x00,        //       Logical Minimum (0)
     0x27, 0xFF, 0xFF, 0x00, 0x00,  //       Logical Maximum (65535)
     0x35, 0x00,        //       Physical Minimum (0)
     0x47, 0xFF, 0xFF, 0x00, 0x00,  //       Physical Maximum (65535)
     0x75, 0x10,        //       Report Size (16)
     0x95, 0x01,        //       Report Count (1)
-    0x81, 0x02,        //       Input (Data,Var,Abs)
-    0xC0,              //     End Collection
-    
-    // Pedals (3 axes: throttle, brake, clutch)
-    0x09, 0x01,        //     Usage (Pointer)
-    0xA1, 0x00,        //     Collection (Physical)
-    0x09, 0x33,        //       Usage (Rx) - Throttle
-    0x09, 0x34,        //       Usage (Ry) - Brake  
-    0x09, 0x35,        //       Usage (Rz) - Clutch
-    0x15, 0x00,        //       Logical Minimum (0)
-    0x27, 0xFF, 0xFF, 0x00, 0x00,  //       Logical Maximum (65535)
-    0x35, 0x00,        //       Physical Minimum (0)
-    0x47, 0xFF, 0xFF, 0x00, 0x00,  //       Physical Maximum (65535)
-    0x75, 0x10,        //       Report Size (16)
-    0x95, 0x03,        //       Report Count (3)
     0x81, 0x02,        //       Input (Data,Var,Abs)
     0xC0,              //     End Collection
     
@@ -286,7 +287,7 @@ bool GamepadDevice::CreateUSBGadget() {
           "echo 'G29 Driving Force Racing Wheel' > strings/0x409/product && "
           "echo '000000000001' > strings/0x409/serialnumber && "
           "mkdir -p functions/hid.usb0 && cd functions/hid.usb0 && "
-          "echo 1 > protocol && echo 1 > subclass && echo 16 > report_length && "
+          "echo 1 > protocol && echo 1 > subclass && echo 18 > report_length && "
           "printf '" + descriptor_hex + "' > report_desc && "
           "cd /sys/kernel/config/usb_gadget/g29wheel && "
           "mkdir -p configs/c.1/strings/0x409 && "
@@ -626,34 +627,40 @@ void GamepadDevice::SendState() {
 }
 
 std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
-    // G29 HID Report structure (16 bytes total):
-    // Byte 0-1: Steering (16-bit, little endian, 0-65535, center=32768)
-    // Byte 2-3: Throttle (16-bit, little endian, inverted: 65535=rest, 0=pressed)
-    // Byte 4-5: Brake (16-bit, little endian, inverted: 65535=rest, 0=pressed)  
-    // Byte 6-7: Clutch (16-bit, little endian, inverted: 65535=rest, 0=pressed)
-    // Byte 8: HAT switch (4 bits) + padding (4 bits)
-    // Byte 9-12: Buttons (25 bits) + padding (7 bits)
+    // G29 HID Report structure (18 bytes total to match descriptor):
+    // Byte 0-1: X (Steering) - 16-bit, little endian, 0-65535, center=32768
+    // Byte 2-3: Y (Unused) - 16-bit, constant 65535
+    // Byte 4-5: Z (Brake) - 16-bit, little endian, inverted: 65535=rest, 0=pressed  
+    // Byte 6-7: Rz (Throttle) - 16-bit, little endian, inverted: 65535=rest, 0=pressed
+    // Byte 8-9: Rx (Clutch) - 16-bit, little endian, inverted: 65535=rest, 0=pressed
+    // Byte 10: HAT switch (4 bits) + padding (4 bits)
+    // Byte 11-14: Buttons (25 bits) + padding (7 bits)
+    // Byte 15-17: Padding to 18 bytes
     
-    std::vector<uint8_t> report(16, 0);
+    std::vector<uint8_t> report(18, 0);
     
-    // Steering: convert from -32768..32767 to 0..65535
+    // X axis: Steering - convert from -32768..32767 to 0..65535
     uint16_t steering_u = static_cast<uint16_t>(static_cast<int16_t>(steering) + 32768);
     report[0] = steering_u & 0xFF;
     report[1] = (steering_u >> 8) & 0xFF;
     
-    // Throttle: inverted, 0-100% -> 65535-0
-    uint16_t throttle_u = 65535 - static_cast<uint16_t>(throttle * 655.35f);
-    report[2] = throttle_u & 0xFF;
-    report[3] = (throttle_u >> 8) & 0xFF;
+    // Y axis: Unused - always 65535 (like real G29)
+    report[2] = 0xFF;
+    report[3] = 0xFF;
     
-    // Brake: inverted, 0-100% -> 65535-0
+    // Z axis: Brake - inverted, 0-100% -> 65535-0
     uint16_t brake_u = 65535 - static_cast<uint16_t>(brake * 655.35f);
     report[4] = brake_u & 0xFF;
     report[5] = (brake_u >> 8) & 0xFF;
     
-    // Clutch: always at rest (65535)
-    report[6] = 0xFF;
-    report[7] = 0xFF;
+    // Rz axis: Throttle - inverted, 0-100% -> 65535-0
+    uint16_t throttle_u = 65535 - static_cast<uint16_t>(throttle * 655.35f);
+    report[6] = throttle_u & 0xFF;
+    report[7] = (throttle_u >> 8) & 0xFF;
+    
+    // Rx axis: Clutch - always at rest (65535)
+    report[8] = 0xFF;
+    report[9] = 0xFF;
     
     // HAT switch (D-Pad): convert from X/Y to 8-direction value
     uint8_t hat = 0x0F; // Neutral
@@ -666,7 +673,7 @@ std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
     else if (dpad_y == 0 && dpad_x == -1) hat = 6; // Left
     else if (dpad_y == -1 && dpad_x == -1) hat = 7; // Up-Left
     
-    report[8] = hat & 0x0F;
+    report[10] = hat & 0x0F;
     
     // Buttons: Pack 25 buttons into 4 bytes (32 bits, use 25)
     uint32_t button_bits = 0;
@@ -696,10 +703,12 @@ std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
     if (buttons["BTN_TRIGGER_HAPPY11"]) button_bits |= (1 << 23);
     if (buttons["BTN_TRIGGER_HAPPY12"]) button_bits |= (1 << 24);
     
-    report[9] = button_bits & 0xFF;
-    report[10] = (button_bits >> 8) & 0xFF;
-    report[11] = (button_bits >> 16) & 0xFF;
-    report[12] = (button_bits >> 24) & 0xFF;
+    report[11] = button_bits & 0xFF;
+    report[12] = (button_bits >> 8) & 0xFF;
+    report[13] = (button_bits >> 16) & 0xFF;
+    report[14] = (button_bits >> 24) & 0xFF;
+    
+    // Bytes 15-17 are padding (already zeroed)
     
     return report;
 }
