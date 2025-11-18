@@ -51,6 +51,11 @@ private:
     int8_t dpad_x;
     int8_t dpad_y;
     
+    // Force Feedback state
+    int16_t ffb_force;           // Current FFB force (-32768 to 32767)
+    int16_t ffb_autocenter;      // Autocenter spring strength
+    bool ffb_enabled;
+    
     // UHID methods
     bool CreateUHID();
     bool CreateUSBGadget();
@@ -58,6 +63,7 @@ private:
     void SendUHIDReport();
     std::vector<uint8_t> BuildHIDReport();
     void USBGadgetPollingThread();  // Thread that responds to host polls
+    void ParseFFBCommand(const uint8_t* data, size_t size);  // Parse FFB OUTPUT reports
     
     // UInput methods (legacy)
     void EmitEvent(uint16_t type, uint16_t code, int32_t value);

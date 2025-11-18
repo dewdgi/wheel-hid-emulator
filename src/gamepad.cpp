@@ -11,7 +11,8 @@
 #include <linux/input-event-codes.h>
 
 GamepadDevice::GamepadDevice() 
-    : fd(-1), use_uhid(false), use_gadget(false), gadget_running(false), steering(0), throttle(0.0f), brake(0.0f), dpad_x(0), dpad_y(0) {
+    : fd(-1), use_uhid(false), use_gadget(false), gadget_running(false), steering(0), throttle(0.0f), brake(0.0f), dpad_x(0), dpad_y(0),
+      ffb_force(0), ffb_autocenter(0), ffb_enabled(true) {
 }
 
 GamepadDevice::~GamepadDevice() {
@@ -470,11 +471,21 @@ bool GamepadDevice::CreateUInput() {
 void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
     std::lock_guard<std::mutex> lock(state_mutex);
     
-    // Pure linear steering: each pixel of mouse movement adds to steering
-    // Using sensitivity/5 for better feel (e.g., sensitivity=20 -> 4 units per pixel)
-    // At sensitivity=20: 4 units per pixel, full lock at 32768/4 = 8192 pixels (~8cm at 1000 DPI)
-    // At sensitivity=50: 10 units per pixel, full lock at 32768/10 = 3276 pixels (~3cm at 1000 DPI)
-    steering += delta * static_cast<float>(sensitivity) * 0.2f;
+    // Convert mouse delta to steering angle with sensitivity
+    float scaled_delta = delta * static_cast<float>(sensitivity) * 0.2f;
+    
+    // Apply FFB resistance: FFB force pulls wheel away from mouse input
+    // Mouse must overcome FFB to change steering position
+    float total_force = scaled_delta - static_cast<float>(ffb_force) * 0.1f;
+    
+    // Apply autocenter spring force (pulls toward center)
+    if (ffb_autocenter > 0 && ffb_enabled) {
+        // Spring force proportional to distance from center
+        float spring_force = -(steering * static_cast<float>(ffb_autocenter)) / 32768.0f;
+        total_force += spring_force;
+    }
+    
+    steering += total_force;
     
     // Clamp to int16_t range
     if (steering < -32768.0f) steering = -32768.0f;
@@ -802,8 +813,10 @@ void GamepadDevice::ProcessUHIDEvents() {
                 
             case UHID_OUTPUT:
                 // Force Feedback output from game
-                // ev.u.output contains FFB data
-                // For now, we just acknowledge it
+                // ev.u.output contains FFB data (7 bytes for G29)
+                if (ev.u.output.size == 7) {
+                    ParseFFBCommand(ev.u.output.data, ev.u.output.size);
+                }
                 break;
                 
             case UHID_GET_REPORT:
@@ -826,6 +839,10 @@ void GamepadDevice::ProcessUHIDEvents() {
                 
             case UHID_SET_REPORT:
                 // Game sets report (e.g., FFB commands)
+                // Parse FFB if it's OUTPUT report
+                if (ev.u.set_report.rtype == UHID_OUTPUT_REPORT && ev.u.set_report.size == 7) {
+                    ParseFFBCommand(ev.u.set_report.data, ev.u.set_report.size);
+                }
                 // Send acknowledgment
                 {
                     struct uhid_event reply;
@@ -890,4 +907,75 @@ void GamepadDevice::USBGadgetPollingThread() {
     }
     
     std::cout << "USB Gadget polling thread stopped" << std::endl;
+}
+
+void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
+    if (size != 7) return;  // G29 FFB commands are always 7 bytes
+    
+    std::lock_guard<std::mutex> lock(state_mutex);
+    
+    uint8_t cmd = data[0];
+    
+    // Logitech G29 FFB protocol (based on hid-lg4ff.c kernel driver)
+    switch (cmd) {
+        case 0x11:  // Constant force effect (slot 1)
+            // data[1] = 0x08 (effect type)
+            // data[2] = force magnitude (0x00-0xFF, 0x80 = no force)
+            // data[3] = direction? (0x80 = center)
+            {
+                int8_t force = static_cast<int8_t>(data[2]) - 0x80;  // Convert to -128..127
+                ffb_force = force * 256;  // Scale to steering range
+            }
+            break;
+            
+        case 0x13:  // Stop effect / de-activate force
+            ffb_force = 0;
+            break;
+            
+        case 0xf5:  // Disable autocenter
+            ffb_autocenter = 0;
+            break;
+            
+        case 0xfe:  // Set autocenter parameters
+            // data[1] = 0x0d
+            // data[2], data[3] = autocenter strength
+            // data[4] = spring rate
+            if (data[1] == 0x0d) {
+                ffb_autocenter = static_cast<int16_t>(data[2]) * 128;  // Scale to usable range
+            }
+            break;
+            
+        case 0x14:  // Activate autocenter
+            if (ffb_autocenter == 0) {
+                ffb_autocenter = 4096;  // Default moderate autocenter
+            }
+            break;
+            
+        case 0xf8:  // Extended commands (range, mode switching, LEDs, etc.)
+            // data[1] = subcommand
+            switch (data[1]) {
+                case 0x81:  // Set wheel range
+                    // data[2] = low byte, data[3] = high byte
+                    // Range in degrees (40-900 for G29)
+                    // We don't need to change anything - just acknowledge
+                    break;
+                case 0x12:  // Set LEDs
+                    // data[2] = LED bitmask (5 LEDs on G29)
+                    // Ignored for mouse/keyboard emulator
+                    break;
+                case 0x09:  // Mode switch (compatibility mode)
+                    // Ignored - we're always in G29 native mode
+                    break;
+                case 0x0a:  // Mode revert on USB reset
+                    // Ignored
+                    break;
+                default:
+                    break;
+            }
+            break;
+            
+        default:
+            // Unknown command - ignore
+            break;
+    }
 }
