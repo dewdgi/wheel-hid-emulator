@@ -34,6 +34,14 @@ GamepadDevice::~GamepadDevice() {
     }
     
     if (fd >= 0) {
+        if (use_uhid) {
+            struct uhid_event ev;
+            memset(&ev, 0, sizeof(ev));
+            ev.type = UHID_DESTROY;
+            write(fd, &ev, sizeof(ev));
+        } else {
+            ioctl(fd, UI_DEV_DESTROY);
+        }
         close(fd);
     }
 }
@@ -940,14 +948,18 @@ void GamepadDevice::FFBUpdateThread() {
             std::lock_guard<std::mutex> lock(state_mutex);
             
             // Apply constant force from game (resistance/effects)
+            // FFB force range: -32768 to 32767
+            // Applied at 100Hz, so scale down by 10000x to prevent runaway
+            // Example: -13824 force = -1.38 units per frame
             if (ffb_force != 0) {
-                steering += static_cast<float>(ffb_force) / 100.0f;
+                steering += static_cast<float>(ffb_force) * 0.0001f;
             }
             
             // Apply autocenter spring force
             if (ffb_autocenter > 0) {
                 // Spring pulls toward center, strength based on current angle
-                float spring_force = -(steering * static_cast<float>(ffb_autocenter)) / 65536.0f;
+                // Also scale down significantly for 100Hz update rate
+                float spring_force = -(steering * static_cast<float>(ffb_autocenter)) / 65536.0f * 0.05f;
                 steering += spring_force;
             }
             
