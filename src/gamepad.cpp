@@ -42,52 +42,64 @@ bool GamepadDevice::Create() {
     // Setup axes
     struct uinput_abs_setup abs_setup;
     
-    // Left Stick X (steering)
+    // Steering wheel (ABS_X)
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_X;
     abs_setup.absinfo.minimum = -32768;
     abs_setup.absinfo.maximum = 32767;
     abs_setup.absinfo.value = 0;
+    abs_setup.absinfo.fuzz = 0;
+    abs_setup.absinfo.flat = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
     
-    // Left Stick Y (unused, but required for Xbox 360)
+    // Y axis (unused for G29)
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_Y;
     abs_setup.absinfo.minimum = -32768;
     abs_setup.absinfo.maximum = 32767;
     abs_setup.absinfo.value = 0;
+    abs_setup.absinfo.fuzz = 0;
+    abs_setup.absinfo.flat = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
     
-    // Left Trigger (brake)
+    // Brake pedal (ABS_Z - left trigger)
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_Z;
     abs_setup.absinfo.minimum = 0;
     abs_setup.absinfo.maximum = 255;
     abs_setup.absinfo.value = 0;
+    abs_setup.absinfo.fuzz = 0;
+    abs_setup.absinfo.flat = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
     
-    // Right Stick X (unused, but required for Xbox 360)
+    // RX axis (unused for G29)
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_RX;
     abs_setup.absinfo.minimum = -32768;
     abs_setup.absinfo.maximum = 32767;
     abs_setup.absinfo.value = 0;
+    abs_setup.absinfo.fuzz = 0;
+    abs_setup.absinfo.flat = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
     
-    // Right Stick Y (unused, but required for Xbox 360)
+    // RY axis (unused for G29)
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_RY;
     abs_setup.absinfo.minimum = -32768;
     abs_setup.absinfo.maximum = 32767;
     abs_setup.absinfo.value = 0;
+    abs_setup.absinfo.fuzz = 0;
+    abs_setup.absinfo.flat = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
     
-    // Right Trigger (throttle)
+    // Throttle pedal (ABS_RZ - right trigger)
     memset(&abs_setup, 0, sizeof(abs_setup));
     abs_setup.code = ABS_RZ;
     abs_setup.absinfo.minimum = 0;
     abs_setup.absinfo.maximum = 255;
     abs_setup.absinfo.value = 0;
+    abs_setup.absinfo.fuzz = 0;
+    abs_setup.absinfo.flat = 0;
     ioctl(fd, UI_ABS_SETUP, &abs_setup);
     
     // D-Pad X
@@ -110,15 +122,15 @@ bool GamepadDevice::Create() {
     struct uinput_setup setup;
     memset(&setup, 0, sizeof(setup));
     setup.id.bustype = BUS_USB;
-    setup.id.vendor = 0x045e;   // Microsoft
-    setup.id.product = 0x028e;  // Xbox 360 Controller
+    setup.id.vendor = 0x046d;   // Logitech
+    setup.id.product = 0xc24f;  // G29 Racing Wheel
     setup.id.version = 1;
-    strcpy(setup.name, "Xbox 360 Controller");
+    strcpy(setup.name, "Logitech G29 Racing Wheel");
     
     ioctl(fd, UI_DEV_SETUP, &setup);
     ioctl(fd, UI_DEV_CREATE);
     
-    std::cout << "Virtual Xbox 360 Controller created" << std::endl;
+    std::cout << "Virtual Logitech G29 Racing Wheel created" << std::endl;
     return true;
 }
 
@@ -173,22 +185,22 @@ void GamepadDevice::UpdateDPad(const Input& input) {
 void GamepadDevice::SendState() {
     if (fd < 0) return;
     
-    // Send steering (left stick X) - convert float to int16_t
+    // Send steering wheel position - convert float to int16_t
     EmitEvent(EV_ABS, ABS_X, static_cast<int16_t>(steering));
     
-    // Send left stick Y (unused, always 0)
+    // Send Y axis (unused for G29, always 0)
     EmitEvent(EV_ABS, ABS_Y, 0);
     
-    // Send right stick (unused, always 0)
+    // Send RX/RY axes (unused for G29, always 0)
     EmitEvent(EV_ABS, ABS_RX, 0);
     EmitEvent(EV_ABS, ABS_RY, 0);
     
-    // Send throttle and brake as triggers (Xbox 360 standard)
+    // Send throttle and brake as pedal axes (G29 standard)
     uint8_t throttle_val = static_cast<uint8_t>(throttle * 2.55f);
     uint8_t brake_val = static_cast<uint8_t>(brake * 2.55f);
     
-    EmitEvent(EV_ABS, ABS_Z, brake_val);    // Left trigger
-    EmitEvent(EV_ABS, ABS_RZ, throttle_val); // Right trigger
+    EmitEvent(EV_ABS, ABS_Z, brake_val);    // Brake pedal
+    EmitEvent(EV_ABS, ABS_RZ, throttle_val); // Throttle pedal
     
     // Send buttons
     EmitEvent(EV_KEY, BTN_A, buttons["BTN_A"] ? 1 : 0);
@@ -208,13 +220,13 @@ void GamepadDevice::SendState() {
 void GamepadDevice::SendNeutral() {
     if (fd < 0) return;
     
-    // Zero all stick axes
+    // Zero all axes (center steering wheel)
     EmitEvent(EV_ABS, ABS_X, 0);
     EmitEvent(EV_ABS, ABS_Y, 0);
     EmitEvent(EV_ABS, ABS_RX, 0);
     EmitEvent(EV_ABS, ABS_RY, 0);
     
-    // Zero triggers
+    // Zero pedals
     EmitEvent(EV_ABS, ABS_Z, 0);
     EmitEvent(EV_ABS, ABS_RZ, 0);
     EmitEvent(EV_KEY, BTN_A, 0);

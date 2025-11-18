@@ -1,7 +1,7 @@
 # Wheel Emulator Architecture
 
 ## Purpose
-Transform keyboard+mouse into Xbox 360 gamepad for racing games using Linux uinput/evdev APIs.
+Transform keyboard+mouse into Logitech G29 Racing Wheel for racing games using Linux uinput/evdev APIs.
 
 ---
 
@@ -46,15 +46,15 @@ wheel-emulator/
   - Prefers real mice over touchpads
 
 ### Gamepad
-- **Type**: Virtual Xbox 360 Controller (VID=0x045e, PID=0x028e)
+- **Type**: Virtual Logitech G29 Racing Wheel (VID=0x046d, PID=0xc24f)
 - **Axes**:
-  - `ABS_X`: Left stick X (steering, -32768 to 32767)
-  - `ABS_Y`: Left stick Y (unused, always 0)
-  - `ABS_RX/RY`: Right stick (unused, always 0)
-  - `ABS_Z`: Left trigger (brake, 0-255)
-  - `ABS_RZ`: Right trigger (throttle, 0-255)
+  - `ABS_X`: Steering wheel (steering, -32768 to 32767)
+  - `ABS_Y`: Y axis (unused, always 0)
+  - `ABS_RX/RY`: RX/RY axes (unused, always 0)
+  - `ABS_Z`: Brake pedal (0-255)
+  - `ABS_RZ`: Throttle pedal (0-255)
   - `ABS_HAT0X/Y`: D-Pad (-1, 0, 1)
-- **Buttons**: A, B, X, Y, LB, RB, Select, Start, L3, R3, Mode
+- **Buttons**: A, B, X, Y, LB, RB, Select, Start
 
 ---
 
@@ -87,7 +87,7 @@ Interactive device identification:
 1. **Initialization**:
    - Check root privileges
    - Load config from `/etc/wheel-emulator.conf`
-   - Create virtual Xbox 360 gamepad via `/dev/uinput`
+   - Create virtual Logitech G29 Racing Wheel via `/dev/uinput`
    - Discover keyboard and mouse (explicit path or auto-detect)
    - Start with emulation **disabled** (devices not grabbed)
 
@@ -209,12 +209,16 @@ mouse=/dev/input/event11
 sensitivity=50
 
 [button_mapping]
-# Xbox 360 Controller Button Mapping
-# Available buttons: BTN_A, BTN_B, BTN_X, BTN_Y
-#                   BTN_TL (L1), BTN_TR (R1)
-#                   BTN_SELECT (Back), BTN_START
-#                   BTN_THUMBL (L3), BTN_THUMBR (R3)
-#                   BTN_MODE (Xbox button)
+### Button Mapping
+
+Available buttons:
+- BTN_A, BTN_B, BTN_X, BTN_Y
+- BTN_TL (left bumper), BTN_TR (right bumper)
+- BTN_SELECT, BTN_START
+
+Available keys: Any KEY_* from Linux input event codes (e.g., KEY_Q, KEY_E, KEY_SPACE, KEY_TAB)
+
+Note: G29 has 20+ buttons available on the real wheel, but we map only basic ones for keyboard control.
 
 KEY_Q=BTN_A
 KEY_E=BTN_B
@@ -334,8 +338,8 @@ ioctl(fd, UI_ABS_SETUP, &abs_setup);
 
 // Create device
 struct uinput_setup setup;
-setup.id.vendor = 0x045e;  // Microsoft
-setup.id.product = 0x028e; // Xbox 360 Controller
+setup.id.vendor = 0x046d;  // Logitech
+setup.id.product = 0xc24f; // G29 Racing Wheel
 ioctl(fd, UI_DEV_SETUP, &setup);
 ioctl(fd, UI_DEV_CREATE);
 ```
@@ -364,7 +368,7 @@ EmitEvent(EV_SYN, SYN_REPORT, 0);
 3. **Accumulative steering**: Mimics real steering wheel behavior - wheel stays where you turn it
 4. **Linear sensitivity**: Direct relationship between mouse movement and steering angle
 5. **System-wide config**: `/etc` location ensures consistency across sessions
-6. **Xbox 360 emulation**: Widest game compatibility
+6. **G29 emulation**: Direct wheel emulation for better compatibility with racing games
 
 ---
 
@@ -380,10 +384,10 @@ EmitEvent(EV_SYN, SYN_REPORT, 0);
 - Check device paths in config
 - Try `--detect` mode to verify devices
 
-### Game doesn't detect controller
-- Verify virtual gamepad created: `ls /dev/input/by-id/ | grep Xbox`
+### Game doesn't detect wheel
+- Verify virtual wheel created: `ls /dev/input/by-id/ | grep Logitech`
 - Check Steam Input settings (may need to disable Steam Input for this game)
-- Test with `jstest /dev/input/js0`
+- Test with `jstest /dev/input/js0` or `evtest /dev/input/eventX`
 
 ### Ctrl+M doesn't work
 - Verify keyboard device is correct

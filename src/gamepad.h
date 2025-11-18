@@ -12,7 +12,7 @@ public:
     GamepadDevice();
     ~GamepadDevice();
     
-    // Create virtual Xbox 360 controller
+    // Create virtual Logitech G29 Racing Wheel
     bool Create();
     
     // Update gamepad state

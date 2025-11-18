@@ -1,6 +1,6 @@
 # Wheel Emulator
 
-Transform keyboard and mouse into an Xbox 360 gamepad for racing games on Linux.
+Transform keyboard and mouse into a Logitech G29 Racing Wheel for racing games on Linux.
 
 ## Features
 
@@ -81,7 +81,7 @@ Values range from 1 to 100:
 
 ### Button Mapping
 
-Available buttons:
+Available buttons (from G29 wheel):
 - BTN_A, BTN_B, BTN_X, BTN_Y
 - BTN_TL (left bumper), BTN_TR (right bumper)
 - BTN_SELECT, BTN_START
@@ -94,7 +94,7 @@ Available keys: Any KEY_* from Linux input event codes (e.g., KEY_Q, KEY_E, KEY_
    - Prioritizes real keyboards over consumer control devices
    - Prioritizes real mice, excludes keyboard pointer devices
    - Filters out touchpads and virtual input devices
-2. Creates a virtual Xbox 360 controller via `/dev/uinput`
+2. Creates a virtual Logitech G29 Racing Wheel via `/dev/uinput`
 3. When enabled, grabs keyboard and mouse for exclusive access
 4. Reads input events and translates them to gamepad events
 5. Sends gamepad state at 1000 Hz
