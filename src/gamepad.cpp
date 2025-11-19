@@ -18,6 +18,12 @@ void GamepadDevice::ShutdownThreads() {
     std::cout << "[DEBUG][ShutdownThreads] ffb_running set to false" << std::endl;
     gadget_running = false;
     std::cout << "[DEBUG][ShutdownThreads] gadget_running set to false" << std::endl;
+    // Forcibly close fd to unblock USB Gadget polling thread if needed
+    if (fd >= 0) {
+        std::cout << "[DEBUG][ShutdownThreads] Forcibly closing fd to unblock gadget thread" << std::endl;
+        close(fd);
+        fd = -1;
+    }
 }
 #include "gamepad.h"
 #include "input.h"
@@ -996,6 +1002,7 @@ void GamepadDevice::USBGadgetPollingThread() {
     int gadget_loop_counter = 0;
     const int poll_timeout = 1; // 1ms for maximum shutdown responsiveness
     while (gadget_running && running) {
+        std::cout << "[DEBUG][USBGadgetPollingThread] TOP OF LOOP, gadget_running=" << gadget_running << ", running=" << running << std::endl;
         std::cout << "[DEBUG][USBGadgetPollingThread] LOOP START, count=" << gadget_loop_counter << ", gadget_running=" << gadget_running << ", running=" << running << std::endl;
         if (!gadget_running) std::cout << "[DEBUG][USBGadgetPollingThread] gadget_running is false, breaking" << std::endl;
         if (!running) std::cout << "[DEBUG][USBGadgetPollingThread] running is false, breaking" << std::endl;
@@ -1005,6 +1012,7 @@ void GamepadDevice::USBGadgetPollingThread() {
             break;
         }
         std::cout << "[DEBUG][USBGadgetPollingThread] before poll, count=" << gadget_loop_counter << std::endl;
+        std::cout << "[DEBUG][USBGadgetPollingThread] before poll, fd=" << fd << ", count=" << gadget_loop_counter << std::endl;
         int ret = poll(&pfd, 1, poll_timeout);
         std::cout << "[DEBUG][USBGadgetPollingThread] after poll, ret=" << ret << ", gadget_running=" << gadget_running << ", running=" << running << ", count=" << gadget_loop_counter << std::endl;
         if (!gadget_running || !running) {
@@ -1024,9 +1032,9 @@ void GamepadDevice::USBGadgetPollingThread() {
         if (ret == 0) continue;
         if (pfd.revents & POLLIN) {
             std::cout << "[DEBUG][USBGadgetPollingThread] POLLIN ready, count=" << gadget_loop_counter << std::endl;
-            std::cout << "[DEBUG][USBGadgetPollingThread] before read, count=" << gadget_loop_counter << std::endl;
+            std::cout << "[DEBUG][USBGadgetPollingThread] before read, fd=" << fd << ", count=" << gadget_loop_counter << std::endl;
             ssize_t bytes = read(fd, ffb_buffer, sizeof(ffb_buffer));
-            std::cout << "[DEBUG][USBGadgetPollingThread] after read, bytes=" << bytes << ", count=" << gadget_loop_counter << std::endl;
+            std::cout << "[DEBUG][USBGadgetPollingThread] after read, bytes=" << bytes << ", fd=" << fd << ", count=" << gadget_loop_counter << std::endl;
             if (!gadget_running || !running) {
                 std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop after read (post-check), count=" << gadget_loop_counter << std::endl;
                 break;
@@ -1052,9 +1060,9 @@ void GamepadDevice::USBGadgetPollingThread() {
             } else {
                 report = BuildHIDReport();
                 state_mutex.unlock();
-                std::cout << "[DEBUG][USBGadgetPollingThread] before write, count=" << gadget_loop_counter << std::endl;
+                std::cout << "[DEBUG][USBGadgetPollingThread] before write, fd=" << fd << ", count=" << gadget_loop_counter << std::endl;
                 ssize_t bytes = write(fd, report.data(), report.size());
-                std::cout << "[DEBUG][USBGadgetPollingThread] after write, bytes=" << bytes << ", count=" << gadget_loop_counter << std::endl;
+                std::cout << "[DEBUG][USBGadgetPollingThread] after write, bytes=" << bytes << ", fd=" << fd << ", count=" << gadget_loop_counter << std::endl;
                 if (!gadget_running || !running) {
                     std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop after write (post-check), count=" << gadget_loop_counter << std::endl;
                     break;
