@@ -909,9 +909,10 @@ void GamepadDevice::USBGadgetPollingThread() {
     uint8_t ffb_buffer[7];  // G29 FFB commands are 7 bytes
     
     int gadget_loop_counter = 0;
+    const int poll_timeout = 20; // 20ms for responsiveness
     while (gadget_running && running) {
         std::cout << "[DEBUG][USBGadgetPollingThread] LOOP START, count=" << gadget_loop_counter << ", gadget_running=" << gadget_running << ", running=" << running << std::endl;
-        int ret = poll(&pfd, 1, 100);
+        int ret = poll(&pfd, 1, poll_timeout);
         std::cout << "[DEBUG][USBGadgetPollingThread] after poll, ret=" << ret << ", gadget_running=" << gadget_running << ", running=" << running << ", count=" << gadget_loop_counter << std::endl;
         if (!gadget_running || !running) {
             std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop, count=" << gadget_loop_counter << std::endl;
@@ -996,7 +997,14 @@ void GamepadDevice::FFBUpdateThread() {
                 velocity = 0.0f;
             }
         }
-        usleep(8000);
+        // Sleep in small increments to allow fast shutdown
+        int slept = 0;
+        const int total_sleep = 8000; // 8ms
+        const int step = 500; // 0.5ms
+        while (slept < total_sleep && ffb_running && running) {
+            usleep(step);
+            slept += step;
+        }
         std::cout << "[DEBUG][FFBUpdateThread] after sleep, ffb_running=" << ffb_running << ", running=" << running << ", count=" << ffb_loop_counter << std::endl;
         if (!ffb_running || !running) {
             std::cout << "[DEBUG][FFBUpdateThread] breaking loop, count=" << ffb_loop_counter << std::endl;
