@@ -62,7 +62,9 @@ void GamepadDevice::UpdateClutch(bool pressed) {
 }
 // Query enabled state (mutex-protected)
 bool GamepadDevice::IsEnabled() {
+    std::cout << "[DEBUG][IsEnabled] before lock_guard, thread=" << std::this_thread::get_id() << std::endl;
     std::lock_guard<std::mutex> lock(state_mutex);
+    std::cout << "[DEBUG][IsEnabled] after lock_guard, thread=" << std::this_thread::get_id() << std::endl;
     return enabled;
 }
 
@@ -976,8 +978,10 @@ void GamepadDevice::FFBUpdateThread() {
     int ffb_loop_counter = 0;
     while (ffb_running && running) {
         std::cout << "[DEBUG][FFBUpdateThread] LOOP START, count=" << ffb_loop_counter << ", ffb_running=" << ffb_running << ", running=" << running << std::endl;
+        std::cout << "[DEBUG][FFBUpdateThread] before lock_guard, thread=" << std::this_thread::get_id() << std::endl;
         {
             std::lock_guard<std::mutex> lock(state_mutex);
+            std::cout << "[DEBUG][FFBUpdateThread] after lock_guard, thread=" << std::this_thread::get_id() << std::endl;
             float total_torque = 0.0f;
             total_torque += static_cast<float>(ffb_force);
             total_torque += user_torque;
@@ -997,6 +1001,7 @@ void GamepadDevice::FFBUpdateThread() {
                 velocity = 0.0f;
             }
         }
+        std::cout << "[DEBUG][FFBUpdateThread] after unlock_guard, thread=" << std::this_thread::get_id() << std::endl;
         // Sleep in small increments to allow fast shutdown
         int slept = 0;
         const int total_sleep = 8000; // 8ms
@@ -1004,10 +1009,13 @@ void GamepadDevice::FFBUpdateThread() {
         while (slept < total_sleep && ffb_running && running) {
             usleep(step);
             slept += step;
-        }
-        std::cout << "[DEBUG][FFBUpdateThread] after sleep, ffb_running=" << ffb_running << ", running=" << running << ", count=" << ffb_loop_counter << std::endl;
-        if (!ffb_running || !running) {
-            std::cout << "[DEBUG][FFBUpdateThread] breaking loop, count=" << ffb_loop_counter << std::endl;
+            std::cout << "[DEBUG][USBGadgetPollingThread] before lock_guard, thread=" << std::this_thread::get_id() << std::endl;
+            {
+                std::lock_guard<std::mutex> lock(state_mutex);
+                std::cout << "[DEBUG][USBGadgetPollingThread] after lock_guard, thread=" << std::this_thread::get_id() << std::endl;
+                report = BuildHIDReport();
+            }
+            std::cout << "[DEBUG][USBGadgetPollingThread] after unlock_guard, thread=" << std::this_thread::get_id() << std::endl;
             break;
         }
         ++ffb_loop_counter;
