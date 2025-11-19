@@ -110,7 +110,9 @@ int main(int, char*[]) {
         std::cout << "[DEBUG][main] before sleep, running=" << running << ", count=" << loop_counter << std::endl;
         usleep(10000);
         std::cout << "[DEBUG][main] after sleep, running=" << running << ", count=" << loop_counter << std::endl;
+        std::cout << "[DEBUG][main] before loop_counter++, running=" << running << ", count=" << loop_counter << std::endl;
         ++loop_counter;
+        std::cout << "[DEBUG][main] after loop_counter++, running=" << running << ", count=" << loop_counter << std::endl;
     }
         std::cout << "[DEBUG][main] Main loop exited, running=" << running << std::endl;
     input.Grab(false);
