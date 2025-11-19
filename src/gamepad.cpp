@@ -268,7 +268,17 @@ bool GamepadDevice::Create() {
     // Fall back to uinput if both fail
     std::cout << "UHID failed, falling back to uinput..." << std::endl;
     std::cout << "Note: uinput doesn't provide HIDRAW, some games may not detect the wheel" << std::endl;
-    return CreateUInput();
+    bool uinput_ok = CreateUInput();
+    std::cout << "[DEBUG][GamepadDevice::Create] UInput created: " << uinput_ok << ", starting threads" << std::endl;
+    if (!gadget_thread.joinable()) {
+        gadget_thread = std::thread(&GamepadDevice::USBGadgetPollingThread, this);
+        std::cout << "[DEBUG][GamepadDevice::Create] gadget_thread started, id=" << gadget_thread.get_id() << std::endl;
+    }
+    if (!ffb_thread.joinable()) {
+        ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
+        std::cout << "[DEBUG][GamepadDevice::Create] ffb_thread started, id=" << ffb_thread.get_id() << std::endl;
+    }
+    return uinput_ok;
 }
 
 bool GamepadDevice::CreateUSBGadget() {
