@@ -14,6 +14,8 @@ public:
     std::mutex input_mutex;
     void NotifyInputChanged();
     void Read();
+    int get_kbd_fd() const { return kbd_fd; }
+    int get_mouse_fd() const { return mouse_fd; }
 public:
     Input();
     ~Input();

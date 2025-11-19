@@ -6,6 +6,7 @@ void notify_all_shutdown(Input& input, GamepadDevice& gamepad);
 #include <iostream>
 #include <atomic>
 #include <csignal>
+#include <signal.h>
 #include <unistd.h>
 #include <cstring>
 #include <vector>
@@ -14,6 +15,8 @@ void notify_all_shutdown(Input& input, GamepadDevice& gamepad);
 #include <sys/ioctl.h>
 #include <linux/input.h>
 #include <linux/input-event-codes.h>
+#include <poll.h>
+#include <chrono>
 #include "config.h"
 #include "input.h"
 #include "gamepad.h"
@@ -22,12 +25,10 @@ std::atomic<bool> running{true};
 
 void signal_handler(int signal) {
     if (signal == SIGINT) {
-        std::cout << "\n[DEBUG][signal_handler] Received Ctrl+C, shutting down..." << std::endl;
-        running = false;
-        std::cout << "[DEBUG][signal_handler] set running=" << running << std::endl;
-        // Best effort: try to wake all threads (input_cv, state_cv, ffb_cv)
-        // These will be no-ops if not yet constructed
-        // (input and gamepad are not accessible here, so rely on main loop to notify as well)
+        const char msg[] = "\n[signal_handler] Received Ctrl+C, shutting down...\n";
+        ssize_t ignored = write(STDERR_FILENO, msg, sizeof(msg) - 1);
+        (void)ignored;
+        running.store(false, std::memory_order_relaxed);
     }
 }
 
@@ -59,7 +60,11 @@ int main(int, char*[]) {
     }
 
     // Setup signal handler
-    signal(SIGINT, signal_handler);
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, nullptr);
 
     // Load configuration
     Config config;
@@ -84,16 +89,39 @@ int main(int, char*[]) {
     // Start input event thread
     std::thread input_thread([&input]() {
         while (running) {
-            input.Read();
-            input.NotifyInputChanged();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            // Use poll() with timeout to block until input or shutdown
+            struct pollfd pfds[2];
+            int nfds = 0;
+            if (input.get_kbd_fd() >= 0) {
+                pfds[nfds].fd = input.get_kbd_fd();
+                pfds[nfds].events = POLLIN;
+                nfds++;
+            }
+            if (input.get_mouse_fd() >= 0) {
+                pfds[nfds].fd = input.get_mouse_fd();
+                pfds[nfds].events = POLLIN;
+                nfds++;
+            }
+            int pret = 0;
+            if (nfds > 0) {
+                pret = poll(pfds, nfds, 50); // 50ms timeout
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            if (!running) break;
+            if (pret > 0) {
+                int dummy = 0;
+                input.Read(dummy);
+                input.NotifyInputChanged();
+            }
         }
     });
 
     std::unique_lock<std::mutex> lock(input.input_mutex);
     bool printed_main_loop = false;
     while (running) {
-        input.input_cv.wait(lock);
+        input.input_cv.wait_for(lock, std::chrono::milliseconds(100));
+        if (!running) break;
         if (!printed_main_loop) {
             std::cout << "[DEBUG][main] Loop running, running=" << running.load() << std::endl;
             printed_main_loop = true;
