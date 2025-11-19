@@ -910,39 +910,29 @@ void GamepadDevice::USBGadgetPollingThread() {
     
     while (gadget_running && running) {
         std::cout << "[DEBUG][USBGadgetPollingThread] top of loop, gadget_running=" << gadget_running << ", running=" << running << std::endl;
-        // Wait for either read or write ready (with timeout)
         int ret = poll(&pfd, 1, 100);  // 100ms timeout
-        
+        std::cout << "[DEBUG][USBGadgetPollingThread] after poll, ret=" << ret << ", gadget_running=" << gadget_running << ", running=" << running << std::endl;
+        if (!gadget_running || !running) break;
         if (ret < 0) {
             if (errno == EINTR) continue;
             std::cerr << "USB Gadget poll error: " << strerror(errno) << std::endl;
             break;
         }
-        
-        if (ret == 0) {
-            // Timeout - continue loop
-            continue;
-        }
-        
-        // Check for FFB OUTPUT reports from host
+        if (ret == 0) continue;
         if (pfd.revents & POLLIN) {
             ssize_t bytes = read(fd, ffb_buffer, sizeof(ffb_buffer));
             if (bytes == 7) {
-                // Valid FFB command received
                 ParseFFBCommand(ffb_buffer, bytes);
             } else if (bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
                 std::cerr << "USB Gadget read error: " << strerror(errno) << std::endl;
             }
         }
-        
-        // Send INPUT report when host is ready to receive
         if (pfd.revents & POLLOUT) {
             std::vector<uint8_t> report;
             {
                 std::lock_guard<std::mutex> lock(state_mutex);
                 report = BuildHIDReport();
             }
-            
             ssize_t bytes = write(fd, report.data(), report.size());
             if (bytes < 0) {
                 if (errno != EAGAIN && errno != EWOULDBLOCK) {
@@ -954,14 +944,12 @@ void GamepadDevice::USBGadgetPollingThread() {
                 }
             }
         }
-        
         if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
             std::cerr << "USB Gadget poll error flags" << std::endl;
             break;
         }
     }
-    
-    std::cout << "[DEBUG] USB Gadget polling thread stopped" << std::endl;
+    std::cout << "[DEBUG][USBGadgetPollingThread] thread stopped, running=" << running << std::endl;
 }
 
 void GamepadDevice::FFBUpdateThread() {
@@ -978,31 +966,23 @@ void GamepadDevice::FFBUpdateThread() {
         std::cout << "[DEBUG][FFBUpdateThread] top of loop, ffb_running=" << ffb_running << ", running=" << running << std::endl;
         {
             std::lock_guard<std::mutex> lock(state_mutex);
-            
             // Calculate total torque acting on wheel
             float total_torque = 0.0f;
-            
             // Add FFB force from game
             total_torque += static_cast<float>(ffb_force);
-            
             // Add user input torque (mouse)
             total_torque += user_torque;
-            
             // Add autocenter spring force
             if (ffb_autocenter > 0) {
                 float spring = -(steering * static_cast<float>(ffb_autocenter)) / 32768.0f;
                 total_torque += spring;
             }
-            
             // Torque changes velocity (F=ma)
             velocity += total_torque * 0.001f;  // Acceleration from torque
-            
             // Damping/friction slows wheel down - reduced from 0.92 to 0.98 for smoother feel
             velocity *= 0.98f;
-            
             // Velocity changes position
             steering += velocity;
-            
             // Clamp to limits
             if (steering < -32768.0f) {
                 steering = -32768.0f;
@@ -1013,12 +993,11 @@ void GamepadDevice::FFBUpdateThread() {
                 velocity = 0.0f;
             }
         }
-        
-        // Update at 125Hz to match main loop (8ms per frame)
         usleep(8000);
+        std::cout << "[DEBUG][FFBUpdateThread] after sleep, ffb_running=" << ffb_running << ", running=" << running << std::endl;
+        if (!ffb_running || !running) break;
     }
-    
-    std::cout << "[DEBUG] FFB update thread stopped" << std::endl;
+    std::cout << "[DEBUG][FFBUpdateThread] FFB update thread stopped, running=" << running << std::endl;
 }
 
 void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
