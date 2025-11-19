@@ -308,20 +308,24 @@ bool Input::CheckToggle() {
 void Input::Grab(bool enable) {
     int grab = enable ? 1 : 0;
     
-    if (kbd_fd >= 0) {
+    if (kbd_fd >= 0 && fcntl(kbd_fd, F_GETFD) != -1) {
         if (ioctl(kbd_fd, EVIOCGRAB, grab) < 0) {
             std::cerr << "Failed to " << (enable ? "grab" : "ungrab") << " keyboard (fd=" << kbd_fd << ") errno=" << errno << std::endl;
         } else {
             std::cout << (enable ? "Grabbed" : "Ungrabbed") << " keyboard (fd=" << kbd_fd << ")" << std::endl;
         }
+    } else if (enable) {
+        std::cerr << "Cannot grab keyboard: invalid or closed file descriptor." << std::endl;
     }
 
-    if (mouse_fd >= 0) {
+    if (mouse_fd >= 0 && fcntl(mouse_fd, F_GETFD) != -1) {
         if (ioctl(mouse_fd, EVIOCGRAB, grab) < 0) {
             std::cerr << "Failed to " << (enable ? "grab" : "ungrab") << " mouse (fd=" << mouse_fd << ") errno=" << errno << std::endl;
         } else {
             std::cout << (enable ? "Grabbed" : "Ungrabbed") << " mouse (fd=" << mouse_fd << ")" << std::endl;
         }
+    } else if (enable) {
+        std::cerr << "Cannot grab mouse: invalid or closed file descriptor." << std::endl;
     }
 }
 

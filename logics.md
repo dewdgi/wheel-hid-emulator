@@ -8,6 +8,10 @@ This section documents all logical constructs in the codebase, including every l
 **Critical Note (as of Nov 2025):**
 All input reading and device I/O in the main loop (e.g., `input.Read()`) must be performed in non-blocking mode or be interruptible by signals (handle `EINTR`), to ensure the main loop remains responsive to both Ctrl+M (enable/disable) and Ctrl+C (shutdown). Blocking I/O without signal interruption can cause the main loop to hang, making the emulator unresponsive to user input and shutdown requests.
 
+**Thread Shutdown and Device Grabbing:**
+- All background threads (FFB, USB Gadget) must check both their own running flag and the global `running` flag, and use short poll/sleep intervals to ensure prompt shutdown on Ctrl+C or exit.
+- Device grabbing (`EVIOCGRAB`) must only be attempted on valid, open file descriptors. Always check file descriptor validity before grabbing or ungrabbing devices, and log errors if the descriptor is invalid or closed.
+
 ### `src/main.cpp`
 
 - **Functions:**
