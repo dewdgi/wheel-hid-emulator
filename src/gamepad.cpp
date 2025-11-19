@@ -1102,11 +1102,17 @@ void GamepadDevice::FFBUpdateThread() {
     float velocity = 0.0f;  // Current wheel rotation speed
     
     int ffb_loop_counter = 0;
+    int ffb_log_counter = 0;
+    bool last_ffb_running = ffb_running;
+    bool last_running = running;
     while (ffb_running && running) {
-        std::cout << "[DEBUG][FFBUpdateThread] LOOP START, count=" << ffb_loop_counter << ", ffb_running=" << ffb_running << ", running=" << running << std::endl;
-        if (!ffb_running) std::cout << "[DEBUG][FFBUpdateThread] ffb_running is false, breaking" << std::endl;
-        if (!running) std::cout << "[DEBUG][FFBUpdateThread] running is false, breaking" << std::endl;
-        std::cout << "[DEBUG][FFBUpdateThread] BEFORE try_lock, thread=" << std::this_thread::get_id() << std::endl;
+        if (ffb_log_counter % 1000 == 0 || last_ffb_running != ffb_running || last_running != running) {
+            std::cout << "[DEBUG][FFBUpdateThread] LOOP START, count=" << ffb_loop_counter << ", ffb_running=" << ffb_running << ", running=" << running << std::endl;
+            std::cout << "[DEBUG][FFBUpdateThread] BEFORE try_lock, thread=" << std::this_thread::get_id() << std::endl;
+        }
+        last_ffb_running = ffb_running;
+        last_running = running;
+        ++ffb_log_counter;
         bool got_lock = false;
         for (int try_count = 0; try_count < 20; ++try_count) { // Try for up to 10ms
             if (!ffb_running || !running) break;
