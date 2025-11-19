@@ -74,9 +74,13 @@ int main(int, char*[]) {
     bool mouse_ok = input.DiscoverMouse(config.mouse_device);
     std::cout << "[DEBUG][main] input.DiscoverMouse returned " << mouse_ok << std::endl;
 
+    bool printed_main_loop = false;
     while (running) {
-        // ...existing code...
-        std::cout << "[DEBUG][main] Loop running, running=" << running << std::endl;
+        if (!printed_main_loop) {
+            std::cout << "[DEBUG][main] Loop running, running=" << running.load() << std::endl;
+            printed_main_loop = true;
+        }
+        // ...main loop logic...
     }
     std::cout << "[DEBUG][main] Main loop exited, running=" << running << std::endl;
     // Signal threads to exit before destruction
