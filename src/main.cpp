@@ -82,6 +82,7 @@ int main(int, char*[]) {
         std::cout << "[DEBUG][main] after input.Read, running=" << running << ", count=" << loop_counter << std::endl;
         bool toggle = input.CheckToggle();
         std::cout << "[DEBUG][main] after CheckToggle, toggle=" << toggle << ", running=" << running << ", count=" << loop_counter << std::endl;
+        std::cout << "[DEBUG][main] before IsEnabled, running=" << running << ", count=" << loop_counter << std::endl;
         bool enabled = gamepad.IsEnabled();
         std::cout << "[DEBUG][main] after IsEnabled, enabled=" << enabled << ", running=" << running << ", count=" << loop_counter << std::endl;
         if (toggle) {
