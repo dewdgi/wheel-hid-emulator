@@ -49,6 +49,24 @@ bool Input::DiscoverKeyboard(const std::string& device_path) {
             }
             int grab_result = ioctl(kbd_fd, EVIOCGRAB, 0);
             std::cout << "[DEBUG][DiscoverKeyboard] kbd_fd EVIOCGRAB(0) result=" << grab_result << ", errno=" << errno << std::endl;
+
+            // Print supported event types
+            unsigned long evbit[8] = {0};
+            if (ioctl(kbd_fd, EVIOCGBIT(0, sizeof(evbit)), evbit) >= 0) {
+                std::cout << "[DEBUG][DiscoverKeyboard] Supported event types:";
+                for (int i = 0; i < 64; ++i) {
+                    if (evbit[0] & (1UL << i)) std::cout << " " << i;
+                }
+                std::cout << std::endl;
+            }
+            unsigned long keybit[8] = {0};
+            if (ioctl(kbd_fd, EVIOCGBIT(EV_KEY, sizeof(keybit)), keybit) >= 0) {
+                std::cout << "[DEBUG][DiscoverKeyboard] Supported keys:";
+                for (int i = 0; i < 64; ++i) {
+                    if (keybit[0] & (1UL << i)) std::cout << " " << i;
+                }
+                std::cout << std::endl;
+            }
         }
         if (kbd_fd < 0) {
             std::cerr << "Failed to open keyboard device: " << device_path << ", errno=" << errno << std::endl;
@@ -153,6 +171,24 @@ bool Input::DiscoverMouse(const std::string& device_path) {
             }
             int grab_result = ioctl(mouse_fd, EVIOCGRAB, 0);
             std::cout << "[DEBUG][DiscoverMouse] mouse_fd EVIOCGRAB(0) result=" << grab_result << ", errno=" << errno << std::endl;
+
+            // Print supported event types
+            unsigned long evbit[8] = {0};
+            if (ioctl(mouse_fd, EVIOCGBIT(0, sizeof(evbit)), evbit) >= 0) {
+                std::cout << "[DEBUG][DiscoverMouse] Supported event types:";
+                for (int i = 0; i < 64; ++i) {
+                    if (evbit[0] & (1UL << i)) std::cout << " " << i;
+                }
+                std::cout << std::endl;
+            }
+            unsigned long relbit[8] = {0};
+            if (ioctl(mouse_fd, EVIOCGBIT(EV_REL, sizeof(relbit)), relbit) >= 0) {
+                std::cout << "[DEBUG][DiscoverMouse] Supported rel codes:";
+                for (int i = 0; i < 64; ++i) {
+                    if (relbit[0] & (1UL << i)) std::cout << " " << i;
+                }
+                std::cout << std::endl;
+            }
         }
         if (mouse_fd < 0) {
             std::cerr << "Failed to open mouse device: " << device_path << ", errno=" << errno << std::endl;
