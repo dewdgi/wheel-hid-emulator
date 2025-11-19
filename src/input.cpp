@@ -244,7 +244,16 @@ bool Input::DiscoverMouse(const std::string& device_path) {
 void Input::Read(int& mouse_dx) {
     mouse_dx = 0;
     struct input_event ev;
-    std::cout << "[DEBUG][Input::Read] Entered, running=" << running << std::endl;
+    std::cout << "[DEBUG][Input::Read] Entered, running=" << running << ", getuid()=" << getuid() << std::endl;
+    // Try a non-blocking read at startup to see if any event is available
+    if (kbd_fd >= 0) {
+        ssize_t n = read(kbd_fd, &ev, sizeof(ev));
+        std::cout << "[DEBUG][Input::Read] Startup test read from kbd_fd, n=" << n << ", errno=" << errno << std::endl;
+    }
+    if (mouse_fd >= 0) {
+        ssize_t n = read(mouse_fd, &ev, sizeof(ev));
+        std::cout << "[DEBUG][Input::Read] Startup test read from mouse_fd, n=" << n << ", errno=" << errno << std::endl;
+    }
     struct pollfd pfds[2];
     int nfds = 0;
     if (kbd_fd >= 0) {

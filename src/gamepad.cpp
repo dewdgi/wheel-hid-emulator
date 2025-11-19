@@ -959,6 +959,7 @@ void GamepadDevice::USBGadgetPollingThread() {
         ++gadget_loop_counter;
     }
     std::cout << "[DEBUG][USBGadgetPollingThread] thread stopped, running=" << running << std::endl;
+    std::cout << "[DEBUG][USBGadgetPollingThread] EXITED" << std::endl;
 }
 
 void GamepadDevice::FFBUpdateThread() {
@@ -1004,6 +1005,7 @@ void GamepadDevice::FFBUpdateThread() {
         ++ffb_loop_counter;
     }
     std::cout << "[DEBUG][FFBUpdateThread] FFB update thread stopped, running=" << running << std::endl;
+    std::cout << "[DEBUG][FFBUpdateThread] EXITED" << std::endl;
 }
 
 void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
