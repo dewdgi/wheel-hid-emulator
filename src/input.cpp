@@ -210,6 +210,15 @@ void Input::RefreshDevices() {
 
     bool need_auto = WantsKeyboardAuto() || WantsMouseAuto();
     if (!need_auto) {
+        // Prune any previously auto-discovered devices so "manual only" truly pins to overrides
+        for (size_t i = 0; i < devices.size();) {
+            if (!devices[i].manual) {
+                CloseDevice(devices[i]);
+                devices.erase(devices.begin() + i);
+            } else {
+                ++i;
+            }
+        }
         return;
     }
 
