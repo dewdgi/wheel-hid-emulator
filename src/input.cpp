@@ -293,14 +293,15 @@ void Input::Read(int& mouse_dx) {
     }
 }
 
+// Improved toggle: allow either Ctrl key, and tolerate quick presses
 bool Input::CheckToggle() {
-    bool both = keys[KEY_LEFTCTRL] && keys[KEY_M];
+    bool ctrl = keys[KEY_LEFTCTRL] || keys[KEY_RIGHTCTRL];
+    bool m = keys[KEY_M];
+    bool both = ctrl && m;
     bool toggled = false;
-    
     if (both && !prev_toggle) {
         toggled = true;
     }
-    
     prev_toggle = both;
     return toggled;
 }

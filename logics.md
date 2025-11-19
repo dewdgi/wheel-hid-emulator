@@ -97,7 +97,7 @@ All input reading and device I/O in the main loop (e.g., `input.Read()`) must be
         - Physics: `velocity += ...; velocity *= ...; steering += ...;`
         - `if (steering < -32768) steering = -32768;` (clamp)
     - `USBGadgetPollingThread()`
-      - `while (gadget_running)` (polling loop)
+      - `while (gadget_running && running)` (polling loop)
         - `poll(...);` (wait for host)
         - `if (revents & POLLIN)`
         - `if (revents & POLLOUT)`
@@ -123,9 +123,12 @@ All input reading and device I/O in the main loop (e.g., `input.Read()`) must be
       - `if (ev.type == EV_KEY && ev.code < KEY_MAX)`
       - `if (ev.type == EV_REL && ev.code == REL_X)`
     - `CheckToggle()`
-      - `bool both = keys[KEY_LEFTCTRL] && keys[KEY_M];`
+      - `bool ctrl = keys[KEY_LEFTCTRL] || keys[KEY_RIGHTCTRL];`
+      - `bool m = keys[KEY_M];`
+      - `bool both = ctrl && m;`
       - `if (both && !prev_toggle) toggled = true;`
       - `prev_toggle = both;`
+      - `return toggled;`
     - `Grab(bool)`
       - `if (kbd_fd >= 0) ... if (ioctl(...) < 0) ... else ...`
       - `if (mouse_fd >= 0) ... if (ioctl(...) < 0) ... else ...`
@@ -455,7 +458,7 @@ Current (FFB physics improvements + race condition fix **applied**)
 - Physics-based steering simulation
 - 25 buttons + D-Pad + 4 axes (steering, brake, throttle, unused Y)
 - Configurable sensitivity and device paths
-- Interactive device detection mode
+- Interactive device detection mode (`--detect`) for user identification
 
 ---
 
@@ -727,6 +730,7 @@ while (running) {
         gamepad.UpdateSteering(mouse_dx, sensitivity)
         gamepad.UpdateThrottle(W_pressed)
         gamepad.UpdateBrake(S_pressed)
+        gamepad.UpdateClutch(A_pressed)
         gamepad.UpdateButtons(input)
         gamepad.UpdateDPad(input)
         gamepad.SendState()  // Send HID report

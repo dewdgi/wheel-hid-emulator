@@ -1,4 +1,3 @@
-
 #include "gamepad.h"
 #include "input.h"
 #include <fcntl.h>
@@ -298,7 +297,7 @@ bool GamepadDevice::CreateUSBGadget() {
           "mkdir -p configs/c.1/strings/0x409 && "
           "echo 'G29 Configuration' > configs/c.1/strings/0x409/configuration && "
           "echo 500 > configs/c.1/MaxPower && "
-          "ln -s functions/hid.usb0 configs/c.1/ && "
+          "ln -s functions/hid.usb0 configs/c.1/&& "
           "UDC=$(ls /sys/class/udc 2>/dev/null | head -n1) && "
           "if [ -n \"$UDC\" ]; then echo $UDC > UDC; fi";
     
@@ -905,7 +904,7 @@ void GamepadDevice::USBGadgetPollingThread() {
     
     uint8_t ffb_buffer[7];  // G29 FFB commands are 7 bytes
     
-    while (gadget_running) {
+    while (gadget_running && running) {
         // Wait for either read or write ready (with timeout)
         int ret = poll(&pfd, 1, 100);  // 100ms timeout
         
