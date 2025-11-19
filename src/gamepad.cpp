@@ -983,6 +983,10 @@ void GamepadDevice::FFBUpdateThread() {
         {
             std::lock_guard<std::mutex> lock(state_mutex);
             std::cout << "[DEBUG][FFBUpdateThread] after lock_guard, thread=" << std::this_thread::get_id() << std::endl;
+            if (!running) {
+                std::cout << "[DEBUG][FFBUpdateThread] running is false after lock_guard, breaking" << std::endl;
+                break;
+            }
             float total_torque = 0.0f;
             total_torque += static_cast<float>(ffb_force);
             total_torque += user_torque;
