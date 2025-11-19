@@ -207,51 +207,52 @@ int run_detection_mode() {
         Config config;
         // Ensure config exists (will create if missing)
         config.Load();
-        
-        std::cout << "Updating /etc/wheel-emulator.conf with detected devices..." << std::endl;
-        if (config.UpdateDevices(best_keyboard->path, best_mouse->path)) {
-            std::cout << "Success! You can now run the emulator normally." << std::endl;
-        } else {
-            std::cout << "Failed to update config. Please manually add:" << std::endl;
-            std::cout << "  keyboard=" << best_keyboard->path << std::endl;
-            std::cout << "  mouse=" << best_mouse->path << std::endl;
-        }
-    } else {
-        std::cout << "Cannot update config: not all devices detected." << std::endl;
-        std::cout << "Please ensure you typed on keyboard and moved mouse during detection." << std::endl;
-    }
-    
-    return 0;
-}
-
-int main(int argc, char* argv[]) {
-    // Check root privileges
-    if (!check_root()) {
-        return 1;
-    }
-    
-    // Check for --detect flag
-    if (argc > 1 && strcmp(argv[1], "--detect") == 0) {
-        return run_detection_mode();
-    }
-    
-    std::cout << "=== Wheel Emulator ===" << std::endl;
-    std::cout << "Transform keyboard+mouse into Logitech G29 Racing Wheel for racing games" << std::endl;
-    std::cout << std::endl;
-    
-    // Setup signal handler
-    signal(SIGINT, signal_handler);
-    
-    // Load configuration
-    Config config;
-    if (!config.Load()) {
-        std::cerr << "Failed to load configuration" << std::endl;
-        return 1;
-    }
-    std::cout << "Sensitivity: " << config.sensitivity << std::endl;
-    std::cout << std::endl;
-    
-    // Create virtual gamepad
+            int loop_counter = 0;
+            while (true) {
+                std::cout << "[DEBUG][main] LOOP START, count=" << loop_counter << ", running=" << running << std::endl;
+                if (!running) {
+                    std::cout << "[DEBUG][main] running is false, breaking main loop at count=" << loop_counter << std::endl;
+                    break;
+                }
+                int mouse_dx = 0;
+                std::cout << "[DEBUG][main] calling input.Read(), count=" << loop_counter << std::endl;
+                input.Read(mouse_dx);
+                std::cout << "[DEBUG][main] after input.Read, running=" << running << ", count=" << loop_counter << std::endl;
+                bool toggle = input.CheckToggle();
+                std::cout << "[DEBUG][main] after CheckToggle, toggle=" << toggle << ", running=" << running << ", count=" << loop_counter << std::endl;
+                bool enabled = gamepad.IsEnabled();
+                std::cout << "[DEBUG][main] after IsEnabled, enabled=" << enabled << ", running=" << running << ", count=" << loop_counter << std::endl;
+                if (toggle) {
+                    std::cout << "[DEBUG][main] Toggle detected! count=" << loop_counter << std::endl;
+                    gamepad.ToggleEnabled(input);
+                    std::cout << "[DEBUG][main] after ToggleEnabled, running=" << running << ", count=" << loop_counter << std::endl;
+                }
+                if (enabled) {
+                    std::cout << "[DEBUG][main] updating steering, running=" << running << ", count=" << loop_counter << std::endl;
+                    gamepad.UpdateSteering(mouse_dx, config.sensitivity);
+                    std::cout << "[DEBUG][main] updating throttle, running=" << running << ", count=" << loop_counter << std::endl;
+                    gamepad.UpdateThrottle(input.IsKeyPressed(KEY_W));
+                    std::cout << "[DEBUG][main] updating brake, running=" << running << ", count=" << loop_counter << std::endl;
+                    gamepad.UpdateBrake(input.IsKeyPressed(KEY_S));
+                    std::cout << "[DEBUG][main] updating clutch, running=" << running << ", count=" << loop_counter << std::endl;
+                    gamepad.UpdateClutch(input.IsKeyPressed(KEY_A));
+                    std::cout << "[DEBUG][main] updating buttons, running=" << running << ", count=" << loop_counter << std::endl;
+                    gamepad.UpdateButtons(input);
+                    std::cout << "[DEBUG][main] updating dpad, running=" << running << ", count=" << loop_counter << std::endl;
+                    gamepad.UpdateDPad(input);
+                    std::cout << "[DEBUG][main] sending state, running=" << running << ", count=" << loop_counter << std::endl;
+                    gamepad.SendState();
+                }
+                std::cout << "[DEBUG][main] processing UHID events, running=" << running << ", count=" << loop_counter << std::endl;
+                gamepad.ProcessUHIDEvents();
+                std::cout << "[DEBUG][main] before sleep, running=" << running << ", count=" << loop_counter << std::endl;
+                usleep(10000);
+                std::cout << "[DEBUG][main] after sleep, running=" << running << ", count=" << loop_counter << std::endl;
+                if (!running) {
+                    std::cout << "[DEBUG][main] running is false after sleep, breaking main loop, count=" << loop_counter << std::endl;
+                    break;
+                }
+                ++loop_counter;
     GamepadDevice gamepad;
     if (!gamepad.Create()) {
         std::cerr << "Failed to create virtual gamepad" << std::endl;
