@@ -89,9 +89,9 @@ void GamepadDevice::UpdateClutch(bool pressed, float dt) {
     bool changed = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
-        const float rate = 150.0f;
+        const float rate = 200.0f; // match pedal timings (0.5s full sweep)
         float delta = rate * dt;
-        if (delta > 5.0f) delta = 5.0f;
+        if (delta > 20.0f) delta = 20.0f;
         float next = clutch + (pressed ? delta : -delta);
         if (next < 0.0f) next = 0.0f;
         if (next > 100.0f) next = 100.0f;
@@ -585,9 +585,9 @@ void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
             delta = 0;
         }
         if (delta != 0) {
-            const float gain = static_cast<float>(sensitivity) * 40.0f;
+            const float gain = static_cast<float>(sensitivity) * 140.0f;
             user_torque += delta * gain;
-            const float max_impulse = 20000.0f;
+            const float max_impulse = 80000.0f;
             if (user_torque > max_impulse) user_torque = max_impulse;
             if (user_torque < -max_impulse) user_torque = -max_impulse;
             notify = true;
@@ -602,9 +602,9 @@ void GamepadDevice::UpdateThrottle(bool pressed, float dt) {
     bool changed = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
-        const float rate = 180.0f;
+        const float rate = 200.0f; // reach 0-100% in 0.5 seconds
         float delta = rate * dt;
-        if (delta > 5.0f) delta = 5.0f;
+        if (delta > 20.0f) delta = 20.0f;
         float next = throttle + (pressed ? delta : -delta);
         if (next < 0.0f) next = 0.0f;
         if (next > 100.0f) next = 100.0f;
@@ -622,9 +622,9 @@ void GamepadDevice::UpdateBrake(bool pressed, float dt) {
     bool changed = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
-        const float rate = 200.0f;
+        const float rate = 200.0f; // reach 0-100% in 0.5 seconds
         float delta = rate * dt;
-        if (delta > 5.0f) delta = 5.0f;
+        if (delta > 20.0f) delta = 20.0f;
         float next = brake + (pressed ? delta : -delta);
         if (next < 0.0f) next = 0.0f;
         if (next > 100.0f) next = 100.0f;
@@ -1102,10 +1102,10 @@ void GamepadDevice::FFBUpdateThread() {
             total_torque += spring;
         }
 
-        const float torque_scale = 25000.0f;
+        const float torque_scale = 8000.0f;
         velocity += (total_torque / torque_scale);
-        velocity *= 0.985f;
-        steering += velocity * (dt * 1000.0f);
+        velocity *= 0.995f;
+        steering += velocity * (dt * 50000.0f);
 
         if (steering < -32768.0f) {
             steering = -32768.0f;
