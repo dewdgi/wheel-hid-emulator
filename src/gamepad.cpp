@@ -11,9 +11,11 @@
 #include <linux/uinput.h>
 #include <linux/input-event-codes.h>
 
+
 GamepadDevice::GamepadDevice() 
-    : fd(-1), use_uhid(false), use_gadget(false), gadget_running(false), steering(0), throttle(0.0f), brake(0.0f), dpad_x(0), dpad_y(0),
-      ffb_force(0), ffb_autocenter(0), ffb_enabled(true), user_torque(0.0f) {
+        : fd(-1), use_uhid(false), use_gadget(false), gadget_running(false),
+            enabled(false), steering(0), throttle(0.0f), brake(0.0f), dpad_x(0), dpad_y(0),
+            ffb_force(0), ffb_autocenter(0), ffb_enabled(true), user_torque(0.0f) {
 }
 
 GamepadDevice::~GamepadDevice() {
@@ -24,7 +26,7 @@ GamepadDevice::~GamepadDevice() {
             ffb_thread.join();
         }
     }
-    
+
     // Stop USB Gadget thread if running
     if (gadget_running) {
         gadget_running = false;
@@ -32,7 +34,7 @@ GamepadDevice::~GamepadDevice() {
             gadget_thread.join();
         }
     }
-    
+
     if (fd >= 0) {
         if (use_uhid) {
             struct uhid_event ev;
@@ -46,34 +48,60 @@ GamepadDevice::~GamepadDevice() {
     }
 }
 
+// Atomically set enabled state and grab/ungrab devices under mutex
+void GamepadDevice::SetEnabled(bool enable, Input& input) {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    if (enabled == enable) return;
+    enabled = enable;
+    input.Grab(enable);
+    if (enabled) {
+        std::cout << "Emulation ENABLED" << std::endl;
+    } else {
+        std::cout << "Emulation DISABLED" << std::endl;
+    }
+}
+
+// Query enabled state (mutex-protected)
+bool GamepadDevice::IsEnabled() {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    return enabled;
+}
+
+// Toggle enabled state atomically (mutex-protected)
+void GamepadDevice::ToggleEnabled(Input& input) {
+    std::lock_guard<std::mutex> lock(state_mutex);
+    enabled = !enabled;
+    input.Grab(enabled);
+    if (enabled) {
+        std::cout << "Emulation ENABLED" << std::endl;
+    } else {
+        std::cout << "Emulation DISABLED" << std::endl;
+    }
+}
+
 // Logitech G29 HID Report Descriptor
 // Based on real G29 wheel descriptor with proper OUTPUT report for hid-lg driver
 // The kernel driver expects OUTPUT report with no report ID (report 0) for FFB commands
+// Updated HID descriptor for 26 buttons (matching G29 and logics.md)
 static const uint8_t g29_hid_descriptor[] = {
     0x05, 0x01,        // Usage Page (Generic Desktop)
     0x09, 0x04,        // Usage (Joystick)
     0xA1, 0x01,        // Collection (Application)
-    
-    // First collection: Input controls
     0xA1, 0x02,        //   Collection (Logical)
-    
-    // Axes collection - X, Y, Z, Rz (no clutch axis like real G29)
     0x09, 0x01,        //     Usage (Pointer)
     0xA1, 0x00,        //     Collection (Physical)
     0x09, 0x30,        //       Usage (X) - Steering
-    0x09, 0x31,        //       Usage (Y) - Unused (constant 32767)
-    0x09, 0x32,        //       Usage (Z) - Brake
-    0x09, 0x35,        //       Usage (Rz) - Throttle
+    0x09, 0x31,        //       Usage (Y) - Clutch (G29: 4 axes)
+    0x09, 0x32,        //       Usage (Z) - Accelerator
+    0x09, 0x35,        //       Usage (Rz) - Brake
     0x15, 0x00,        //       Logical Minimum (0)
     0x27, 0xFF, 0xFF, 0x00, 0x00,  //       Logical Maximum (65535)
     0x35, 0x00,        //       Physical Minimum (0)
     0x47, 0xFF, 0xFF, 0x00, 0x00,  //       Physical Maximum (65535)
     0x75, 0x10,        //       Report Size (16)
-    0x95, 0x04,        //       Report Count (4) - X, Y, Z, Rz
+    0x95, 0x04,        //       Report Count (4)
     0x81, 0x02,        //       Input (Data,Var,Abs)
     0xC0,              //     End Collection
-    
-    // HAT switch (D-Pad)
     0x09, 0x39,        //     Usage (Hat switch)
     0x15, 0x00,        //     Logical Minimum (0)
     0x25, 0x07,        //     Logical Maximum (7)
@@ -83,41 +111,29 @@ static const uint8_t g29_hid_descriptor[] = {
     0x75, 0x04,        //     Report Size (4)
     0x95, 0x01,        //     Report Count (1)
     0x81, 0x42,        //     Input (Data,Var,Abs,Null)
-    
-    // Padding
     0x75, 0x04,        //     Report Size (4)
     0x95, 0x01,        //     Report Count (1)
     0x81, 0x03,        //     Input (Const,Var,Abs)
-    
-    // Buttons (25 buttons)
     0x05, 0x09,        //     Usage Page (Button)
     0x19, 0x01,        //     Usage Minimum (Button 1)
-    0x29, 0x19,        //     Usage Maximum (Button 25)
+    0x29, 0x1A,        //     Usage Maximum (Button 26)
     0x15, 0x00,        //     Logical Minimum (0)
     0x25, 0x01,        //     Logical Maximum (1)
     0x75, 0x01,        //     Report Size (1)
-    0x95, 0x19,        //     Report Count (25)
+    0x95, 0x1A,        //     Report Count (26)
     0x81, 0x02,        //     Input (Data,Var,Abs)
-    
-    // Padding to byte boundary (7 bits)
-    0x75, 0x07,        //     Report Size (7)
+    0x75, 0x06,        //     Report Size (6) (padding to next byte)
     0x95, 0x01,        //     Report Count (1)
     0x81, 0x03,        //     Input (Const,Var,Abs)
-    
     0xC0,              //   End Collection (Logical)
-    
-    // Second collection: OUTPUT report for Force Feedback
-    // CRITICAL: This must be present for hid-lg driver to bind successfully
-    // The driver checks for HID_OUTPUT_REPORT 0 (no report ID) with 7 bytes
     0xA1, 0x02,        //   Collection (Logical)
     0x09, 0x02,        //     Usage (0x02) - FFB usage
     0x15, 0x00,        //     Logical Minimum (0)
     0x26, 0xFF, 0x00,  //     Logical Maximum (255)
-    0x95, 0x07,        //     Report Count (7) - REQUIRED: hid-lg expects 7 bytes
+    0x95, 0x07,        //     Report Count (7)
     0x75, 0x08,        //     Report Size (8)
     0x91, 0x02,        //     Output (Data,Var,Abs)
     0xC0,              //   End Collection (Logical)
-    
     0xC0               // End Collection (Application)
 };
 
@@ -347,36 +363,35 @@ bool GamepadDevice::CreateUInput() {
     ioctl(fd, UI_SET_FFBIT, FF_AUTOCENTER);
     
     // Enable joystick buttons (matching real G29 wheel - 25 buttons total)
-    // First 10 buttons using standard joystick codes
-    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER);  // Button 1
-    ioctl(fd, UI_SET_KEYBIT, BTN_THUMB);    // Button 2
-    ioctl(fd, UI_SET_KEYBIT, BTN_THUMB2);   // Button 3
-    ioctl(fd, UI_SET_KEYBIT, BTN_TOP);      // Button 4
-    ioctl(fd, UI_SET_KEYBIT, BTN_TOP2);     // Button 5
-    ioctl(fd, UI_SET_KEYBIT, BTN_PINKIE);   // Button 6
-    ioctl(fd, UI_SET_KEYBIT, BTN_BASE);     // Button 7
-    ioctl(fd, UI_SET_KEYBIT, BTN_BASE2);    // Button 8
-    ioctl(fd, UI_SET_KEYBIT, BTN_BASE3);    // Button 9
-    ioctl(fd, UI_SET_KEYBIT, BTN_BASE4);    // Button 10
-    
-    // Additional buttons
-    ioctl(fd, UI_SET_KEYBIT, BTN_BASE5);    // Button 11
-    ioctl(fd, UI_SET_KEYBIT, BTN_BASE6);    // Button 12
-    ioctl(fd, UI_SET_KEYBIT, BTN_DEAD);     // Button 13
-    
-    // Extra buttons using BTN_TRIGGER_HAPPY range for total 25
-    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY1);  // Button 14
-    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY2);  // Button 15
-    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY3);  // Button 16
-    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY4);  // Button 17
-    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY5);  // Button 18
-    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY6);  // Button 19
-    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY7);  // Button 20
-    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY8);  // Button 21
-    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY9);  // Button 22
-    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY10); // Button 23
-    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY11); // Button 24
-    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY12); // Button 25
+    // 13 base buttons
+    ioctl(fd, UI_SET_KEYBIT, BTN_SOUTH);    // Cross
+    ioctl(fd, UI_SET_KEYBIT, BTN_EAST);     // Circle
+    ioctl(fd, UI_SET_KEYBIT, BTN_WEST);     // Square
+    ioctl(fd, UI_SET_KEYBIT, BTN_NORTH);    // Triangle
+    ioctl(fd, UI_SET_KEYBIT, BTN_TL);       // L1
+    ioctl(fd, UI_SET_KEYBIT, BTN_TR);       // R1
+    ioctl(fd, UI_SET_KEYBIT, BTN_TL2);      // L2
+    ioctl(fd, UI_SET_KEYBIT, BTN_TR2);      // R2
+    ioctl(fd, UI_SET_KEYBIT, BTN_SELECT);   // Share
+    ioctl(fd, UI_SET_KEYBIT, BTN_START);    // Options
+    ioctl(fd, UI_SET_KEYBIT, BTN_THUMBL);   // L3
+    ioctl(fd, UI_SET_KEYBIT, BTN_THUMBR);   // R3
+    ioctl(fd, UI_SET_KEYBIT, BTN_MODE);     // PS
+    // Dead button
+    ioctl(fd, UI_SET_KEYBIT, BTN_DEAD);     // Dead
+    // 12 trigger-happy (D-pad + rotary)
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY1);  // D-pad Up
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY2);  // D-pad Down
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY3);  // D-pad Left
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY4);  // D-pad Right
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY5);  // Red 1
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY6);  // Red 2
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY7);  // Red 3
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY8);  // Red 4
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY9);  // Red 5
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY10); // Red 6
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY11); // Rotary Left
+    ioctl(fd, UI_SET_KEYBIT, BTN_TRIGGER_HAPPY12); // Rotary Right
     
     // Setup axes
     struct uinput_abs_setup abs_setup;
@@ -517,35 +532,36 @@ void GamepadDevice::UpdateBrake(bool pressed) {
 void GamepadDevice::UpdateButtons(const Input& input) {
     std::lock_guard<std::mutex> lock(state_mutex);
     
-    // Map keyboard keys to wheel buttons (all 25 buttons for G29)
-    // Primary buttons (1-12)
-    buttons["BTN_TRIGGER"] = input.IsKeyPressed(KEY_Q);
-    buttons["BTN_THUMB"] = input.IsKeyPressed(KEY_E);
-    buttons["BTN_THUMB2"] = input.IsKeyPressed(KEY_F);
-    buttons["BTN_TOP"] = input.IsKeyPressed(KEY_G);
-    buttons["BTN_TOP2"] = input.IsKeyPressed(KEY_H);
-    buttons["BTN_PINKIE"] = input.IsKeyPressed(KEY_R);
-    buttons["BTN_BASE"] = input.IsKeyPressed(KEY_T);
-    buttons["BTN_BASE2"] = input.IsKeyPressed(KEY_Y);
-    buttons["BTN_BASE3"] = input.IsKeyPressed(KEY_U);
-    buttons["BTN_BASE4"] = input.IsKeyPressed(KEY_I);
-    buttons["BTN_BASE5"] = input.IsKeyPressed(KEY_O);
-    buttons["BTN_BASE6"] = input.IsKeyPressed(KEY_P);
-    
-    // Additional buttons (13-25)
-    buttons["BTN_DEAD"] = input.IsKeyPressed(KEY_1);
-    buttons["BTN_TRIGGER_HAPPY1"] = input.IsKeyPressed(KEY_2);
-    buttons["BTN_TRIGGER_HAPPY2"] = input.IsKeyPressed(KEY_3);
-    buttons["BTN_TRIGGER_HAPPY3"] = input.IsKeyPressed(KEY_4);
-    buttons["BTN_TRIGGER_HAPPY4"] = input.IsKeyPressed(KEY_5);
-    buttons["BTN_TRIGGER_HAPPY5"] = input.IsKeyPressed(KEY_6);
-    buttons["BTN_TRIGGER_HAPPY6"] = input.IsKeyPressed(KEY_7);
-    buttons["BTN_TRIGGER_HAPPY7"] = input.IsKeyPressed(KEY_8);
-    buttons["BTN_TRIGGER_HAPPY8"] = input.IsKeyPressed(KEY_9);
-    buttons["BTN_TRIGGER_HAPPY9"] = input.IsKeyPressed(KEY_0);
-    buttons["BTN_TRIGGER_HAPPY10"] = input.IsKeyPressed(KEY_LEFTSHIFT);
-    buttons["BTN_TRIGGER_HAPPY11"] = input.IsKeyPressed(KEY_SPACE);
-    buttons["BTN_TRIGGER_HAPPY12"] = input.IsKeyPressed(KEY_TAB);
+    // Map keyboard keys to G29 buttons (26 total, see logics.md)
+    // 13 base buttons
+    buttons["BTN_SOUTH"] = input.IsKeyPressed(KEY_Q);      // Cross
+    buttons["BTN_EAST"] = input.IsKeyPressed(KEY_E);       // Circle
+    buttons["BTN_WEST"] = input.IsKeyPressed(KEY_F);       // Square
+    buttons["BTN_NORTH"] = input.IsKeyPressed(KEY_G);      // Triangle
+    buttons["BTN_TL"] = input.IsKeyPressed(KEY_H);         // L1
+    buttons["BTN_TR"] = input.IsKeyPressed(KEY_R);         // R1
+    buttons["BTN_TL2"] = input.IsKeyPressed(KEY_T);        // L2
+    buttons["BTN_TR2"] = input.IsKeyPressed(KEY_Y);        // R2
+    buttons["BTN_SELECT"] = input.IsKeyPressed(KEY_U);     // Share
+    buttons["BTN_START"] = input.IsKeyPressed(KEY_I);      // Options
+    buttons["BTN_THUMBL"] = input.IsKeyPressed(KEY_O);     // L3
+    buttons["BTN_THUMBR"] = input.IsKeyPressed(KEY_P);     // R3
+    buttons["BTN_MODE"] = input.IsKeyPressed(KEY_1);       // PS
+    // Dead button
+    buttons["BTN_DEAD"] = input.IsKeyPressed(KEY_2);       // Dead
+    // 12 trigger-happy (D-pad + rotary)
+    buttons["BTN_TRIGGER_HAPPY1"] = input.IsKeyPressed(KEY_3);   // D-pad Up
+    buttons["BTN_TRIGGER_HAPPY2"] = input.IsKeyPressed(KEY_4);   // D-pad Down
+    buttons["BTN_TRIGGER_HAPPY3"] = input.IsKeyPressed(KEY_5);   // D-pad Left
+    buttons["BTN_TRIGGER_HAPPY4"] = input.IsKeyPressed(KEY_6);   // D-pad Right
+    buttons["BTN_TRIGGER_HAPPY5"] = input.IsKeyPressed(KEY_7);   // Red 1
+    buttons["BTN_TRIGGER_HAPPY6"] = input.IsKeyPressed(KEY_8);   // Red 2
+    buttons["BTN_TRIGGER_HAPPY7"] = input.IsKeyPressed(KEY_9);   // Red 3
+    buttons["BTN_TRIGGER_HAPPY8"] = input.IsKeyPressed(KEY_0);   // Red 4
+    buttons["BTN_TRIGGER_HAPPY9"] = input.IsKeyPressed(KEY_LEFTSHIFT); // Red 5
+    buttons["BTN_TRIGGER_HAPPY10"] = input.IsKeyPressed(KEY_SPACE);    // Red 6
+    buttons["BTN_TRIGGER_HAPPY11"] = input.IsKeyPressed(KEY_TAB);      // Rotary Left
+    buttons["BTN_TRIGGER_HAPPY12"] = input.IsKeyPressed(KEY_ENTER);    // Rotary Right
 }
 
 void GamepadDevice::UpdateDPad(const Input& input) {
@@ -586,19 +602,20 @@ void GamepadDevice::SendState() {
     EmitEvent(EV_ABS, ABS_Z, brake_val);    // Brake pedal
     EmitEvent(EV_ABS, ABS_RZ, throttle_val); // Throttle pedal
     
-    // Send wheel buttons (joystick style - all 25 buttons to match real G29)
-    EmitEvent(EV_KEY, BTN_TRIGGER, buttons["BTN_TRIGGER"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_THUMB, buttons["BTN_THUMB"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_THUMB2, buttons["BTN_THUMB2"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TOP, buttons["BTN_TOP"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TOP2, buttons["BTN_TOP2"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_PINKIE, buttons["BTN_PINKIE"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_BASE, buttons["BTN_BASE"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_BASE2, buttons["BTN_BASE2"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_BASE3, buttons["BTN_BASE3"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_BASE4, buttons["BTN_BASE4"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_BASE5, buttons["BTN_BASE5"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_BASE6, buttons["BTN_BASE6"] ? 1 : 0);
+    // Send all 26 G29 buttons
+    EmitEvent(EV_KEY, BTN_SOUTH, buttons["BTN_SOUTH"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_EAST, buttons["BTN_EAST"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_WEST, buttons["BTN_WEST"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_NORTH, buttons["BTN_NORTH"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TL, buttons["BTN_TL"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TR, buttons["BTN_TR"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TL2, buttons["BTN_TL2"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_TR2, buttons["BTN_TR2"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_SELECT, buttons["BTN_SELECT"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_START, buttons["BTN_START"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_THUMBL, buttons["BTN_THUMBL"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_THUMBR, buttons["BTN_THUMBR"] ? 1 : 0);
+    EmitEvent(EV_KEY, BTN_MODE, buttons["BTN_MODE"] ? 1 : 0);
     EmitEvent(EV_KEY, BTN_DEAD, buttons["BTN_DEAD"] ? 1 : 0);
     EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY1, buttons["BTN_TRIGGER_HAPPY1"] ? 1 : 0);
     EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY2, buttons["BTN_TRIGGER_HAPPY2"] ? 1 : 0);
@@ -667,34 +684,34 @@ std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
     
     report[8] = hat & 0x0F;
     
-    // Buttons: Pack 25 buttons into 4 bytes (32 bits, use 25)
+    // Buttons: Pack 26 buttons into 4 bytes (32 bits, use 26)
     uint32_t button_bits = 0;
-    if (buttons["BTN_TRIGGER"]) button_bits |= (1 << 0);
-    if (buttons["BTN_THUMB"]) button_bits |= (1 << 1);
-    if (buttons["BTN_THUMB2"]) button_bits |= (1 << 2);
-    if (buttons["BTN_TOP"]) button_bits |= (1 << 3);
-    if (buttons["BTN_TOP2"]) button_bits |= (1 << 4);
-    if (buttons["BTN_PINKIE"]) button_bits |= (1 << 5);
-    if (buttons["BTN_BASE"]) button_bits |= (1 << 6);
-    if (buttons["BTN_BASE2"]) button_bits |= (1 << 7);
-    if (buttons["BTN_BASE3"]) button_bits |= (1 << 8);
-    if (buttons["BTN_BASE4"]) button_bits |= (1 << 9);
-    if (buttons["BTN_BASE5"]) button_bits |= (1 << 10);
-    if (buttons["BTN_BASE6"]) button_bits |= (1 << 11);
-    if (buttons["BTN_DEAD"]) button_bits |= (1 << 12);
-    if (buttons["BTN_TRIGGER_HAPPY1"]) button_bits |= (1 << 13);
-    if (buttons["BTN_TRIGGER_HAPPY2"]) button_bits |= (1 << 14);
-    if (buttons["BTN_TRIGGER_HAPPY3"]) button_bits |= (1 << 15);
-    if (buttons["BTN_TRIGGER_HAPPY4"]) button_bits |= (1 << 16);
-    if (buttons["BTN_TRIGGER_HAPPY5"]) button_bits |= (1 << 17);
-    if (buttons["BTN_TRIGGER_HAPPY6"]) button_bits |= (1 << 18);
-    if (buttons["BTN_TRIGGER_HAPPY7"]) button_bits |= (1 << 19);
-    if (buttons["BTN_TRIGGER_HAPPY8"]) button_bits |= (1 << 20);
-    if (buttons["BTN_TRIGGER_HAPPY9"]) button_bits |= (1 << 21);
-    if (buttons["BTN_TRIGGER_HAPPY10"]) button_bits |= (1 << 22);
-    if (buttons["BTN_TRIGGER_HAPPY11"]) button_bits |= (1 << 23);
-    if (buttons["BTN_TRIGGER_HAPPY12"]) button_bits |= (1 << 24);
-    
+    if (buttons["BTN_SOUTH"]) button_bits |= (1 << 0);
+    if (buttons["BTN_EAST"]) button_bits |= (1 << 1);
+    if (buttons["BTN_WEST"]) button_bits |= (1 << 2);
+    if (buttons["BTN_NORTH"]) button_bits |= (1 << 3);
+    if (buttons["BTN_TL"]) button_bits |= (1 << 4);
+    if (buttons["BTN_TR"]) button_bits |= (1 << 5);
+    if (buttons["BTN_TL2"]) button_bits |= (1 << 6);
+    if (buttons["BTN_TR2"]) button_bits |= (1 << 7);
+    if (buttons["BTN_SELECT"]) button_bits |= (1 << 8);
+    if (buttons["BTN_START"]) button_bits |= (1 << 9);
+    if (buttons["BTN_THUMBL"]) button_bits |= (1 << 10);
+    if (buttons["BTN_THUMBR"]) button_bits |= (1 << 11);
+    if (buttons["BTN_MODE"]) button_bits |= (1 << 12);
+    if (buttons["BTN_DEAD"]) button_bits |= (1 << 13);
+    if (buttons["BTN_TRIGGER_HAPPY1"]) button_bits |= (1 << 14);
+    if (buttons["BTN_TRIGGER_HAPPY2"]) button_bits |= (1 << 15);
+    if (buttons["BTN_TRIGGER_HAPPY3"]) button_bits |= (1 << 16);
+    if (buttons["BTN_TRIGGER_HAPPY4"]) button_bits |= (1 << 17);
+    if (buttons["BTN_TRIGGER_HAPPY5"]) button_bits |= (1 << 18);
+    if (buttons["BTN_TRIGGER_HAPPY6"]) button_bits |= (1 << 19);
+    if (buttons["BTN_TRIGGER_HAPPY7"]) button_bits |= (1 << 20);
+    if (buttons["BTN_TRIGGER_HAPPY8"]) button_bits |= (1 << 21);
+    if (buttons["BTN_TRIGGER_HAPPY9"]) button_bits |= (1 << 22);
+    if (buttons["BTN_TRIGGER_HAPPY10"]) button_bits |= (1 << 23);
+    if (buttons["BTN_TRIGGER_HAPPY11"]) button_bits |= (1 << 24);
+    if (buttons["BTN_TRIGGER_HAPPY12"]) button_bits |= (1 << 25);
     report[9] = button_bits & 0xFF;
     report[10] = (button_bits >> 8) & 0xFF;
     report[11] = (button_bits >> 16) & 0xFF;

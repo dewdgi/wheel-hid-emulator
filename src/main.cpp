@@ -273,29 +273,20 @@ int main(int argc, char* argv[]) {
     std::cout << std::endl;
     std::cout << "Emulation is OFF. Press Ctrl+M to enable." << std::endl;
     std::cout << std::endl;
-    
-    bool input_enabled = false;
-    
+
     // Main loop
     while (running) {
         int mouse_dx = 0;
-        
+
         // Read input events
         input.Read(mouse_dx);
-        
-        // Check for toggle
+
+        // Check for toggle (Ctrl+M)
         if (input.CheckToggle()) {
-            input_enabled = !input_enabled;
-            if (input_enabled) {
-                std::cout << "Emulation ENABLED" << std::endl;
-                input.Grab(true);
-            } else {
-                std::cout << "Emulation DISABLED" << std::endl;
-                input.Grab(false);
-            }
+            gamepad.ToggleEnabled(input);
         }
-        
-        if (input_enabled) {
+
+        if (gamepad.IsEnabled()) {
             // Update gamepad state
             gamepad.UpdateSteering(mouse_dx, config.sensitivity);
             gamepad.UpdateThrottle(input.IsKeyPressed(KEY_W));
@@ -305,10 +296,10 @@ int main(int argc, char* argv[]) {
             gamepad.SendState();
         }
         // Don't send any reports when disabled - let device stay at last state
-        
+
         // Process UHID events (for FFB and kernel requests)
         gamepad.ProcessUHIDEvents();
-        
+
         // Sleep for 8ms (125 Hz update rate, matching real racing wheels)
         usleep(8000);
     }

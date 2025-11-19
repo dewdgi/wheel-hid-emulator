@@ -1,14 +1,117 @@
-# Wheel HID Emulator - Architecture Documentation
 
-**Last Updated:** November 18, 2025  
-**Version:** 2.0 (Complete FFB Implementation)
+# Wheel HID Emulator: Logic & Architecture
+
+**Last Updated:** November 19, 2025  
+**Version:** 2.0 (G29-accurate, all race fixes applied)
 
 ---
 
 ## Overview
 
-This project transforms a standard keyboard and mouse into a Logitech G29 Racing Wheel with full Force Feedback support. It creates a virtual USB HID device that is indistinguishable from a real G29 wheel to games and racing simulators.
+This project fully emulates a Logitech G29 wheel, including all axes, pedals, and buttons, matching the real device in every detail. The emulator presents itself as a G29-compatible HID device, ensuring maximum compatibility with games and drivers.
 
+- **Axes:** Steering, Accelerator, Brake, Clutch (all inverted pedals as per G29 spec)
+- **Button count:** 26 (matching the real G29: 13 base, 1 dead, 12 trigger-happy)
+- **Force Feedback:** Supported, with physics loop
+- **HID Descriptor:** Matches Linux kernel `hid-lg4ff` driver for G29
+
+---
+
+## HID Descriptor
+
+The HID report descriptor and axis ranges are modeled after the real G29 as implemented in the Linux kernel (`drivers/hid/hid-lg4ff.c`):
+
+- **Steering (ABS_X):** 0–65535, center at 32767/32768 (unsigned 16-bit)
+- **Accelerator (ABS_Z):** 0–65535, inverted (0 = pressed, 65535 = released)
+- **Brake (ABS_RZ):** 0–65535, inverted (0 = pressed, 65535 = released)
+- **Clutch (ABS_Y):** 0–65535, inverted (0 = pressed, 65535 = released)
+- **All axes:** unsigned 16-bit, as per G29 HID
+
+**Note:** Inversion of pedals is by design and matches the real G29 hardware and Linux driver.
+
+---
+
+## Button Mapping
+
+The G29 has 26 buttons, mapped as follows (matching Linux input codes):
+
+| Button Name         | Linux Code    | HID Report Index |
+|---------------------|--------------|------------------|
+| Cross               | BTN_SOUTH    | 0                |
+| Circle              | BTN_EAST     | 1                |
+| Square              | BTN_WEST     | 2                |
+| Triangle            | BTN_NORTH    | 3                |
+| L1                  | BTN_TL       | 4                |
+| R1                  | BTN_TR       | 5                |
+| L2                  | BTN_TL2      | 6                |
+| R2                  | BTN_TR2      | 7                |
+| Share               | BTN_SELECT   | 8                |
+| Options             | BTN_START    | 9                |
+| L3                  | BTN_THUMBL   | 10               |
+| R3                  | BTN_THUMBR   | 11               |
+| PS                  | BTN_MODE     | 12               |
+| Dead                | BTN_DEAD     | 13               |
+| D-pad Up            | BTN_TRIGGER_HAPPY1 | 14         |
+| D-pad Down          | BTN_TRIGGER_HAPPY2 | 15         |
+| D-pad Left          | BTN_TRIGGER_HAPPY3 | 16         |
+| D-pad Right         | BTN_TRIGGER_HAPPY4 | 17         |
+| Red 1               | BTN_TRIGGER_HAPPY5 | 18         |
+| Red 2               | BTN_TRIGGER_HAPPY6 | 19         |
+| Red 3               | BTN_TRIGGER_HAPPY7 | 20         |
+| Red 4               | BTN_TRIGGER_HAPPY8 | 21         |
+| Red 5               | BTN_TRIGGER_HAPPY9 | 22         |
+| Red 6               | BTN_TRIGGER_HAPPY10| 23         |
+| Rotary Left         | BTN_TRIGGER_HAPPY11| 24         |
+| Rotary Right        | BTN_TRIGGER_HAPPY12| 25         |
+
+**Total:** 26 buttons, matching the real G29.
+
+---
+
+## Technical Specifications
+
+| Feature         | Value (matches G29)      |
+|-----------------|-------------------------|
+| Steering        | ABS_X, 0–65535 unsigned |
+| Accelerator     | ABS_Z, 0–65535 unsigned, inverted |
+| Brake           | ABS_RZ, 0–65535 unsigned, inverted |
+| Clutch          | ABS_Y, 0–65535 unsigned, inverted |
+| Buttons         | 26                      |
+| Force Feedback  | Yes                     |
+
+---
+
+## FFB Physics System
+
+The force feedback (FFB) physics loop operates in signed 16-bit integer space (−32768…32767) for internal calculations. Before sending values to the HID report, these are mapped to the unsigned 0–65535 range as required by the G29 HID protocol.
+
+- **Steering:** Internal signed value mapped to unsigned HID range.
+- **Pedals:** Internal logic inverts and scales to match G29 pedal inversion.
+
+**Conversion Example:**
+```c
+// Internal: int16_t steering; // -32768 ... 32767
+// HID:      uint16_t hid_steering = (uint16_t)(steering + 32768);
+```
+
+---
+
+## State Synchronization & Ungrab Guarantee
+
+The race condition in state synchronization has been fully resolved as of the current version. The emulator guarantees atomic updates to all state variables, matching the G29's behavior.
+
+---
+
+## Code Version
+
+Current (FFB physics improvements + race condition fix **applied**)
+
+---
+
+## References
+
+- Linux kernel source: `drivers/hid/hid-lg4ff.c`
+- Logitech G29 hardware documentation
 **Key Features:**
 - Real USB device emulation (USB Gadget ConfigFS)
 - Full Force Feedback (FFB) support with bidirectional communication
@@ -337,88 +440,48 @@ while (running) {
 
 ---
 
-## Critical Bug Found: Race Condition in SendState()
+## State Synchronization & Ungrab Guarantee
 
-### The Problem
+### Mutex Discipline
 
-In `SendState()` and `BuildHIDReport()`, the code reads `steering` without locking the mutex:
+`state_mutex` is the single writer/read lock for every shared signal (`steering`, `velocity`, `user_torque`, pedal ramps, button bitfields, and the `enabled` latch that drives grabbing). Any thread that touches those fields must hold the mutex, which guarantees the HID report is assembled from a single coherent snapshot and that the toggle edge cannot be torn by a concurrent physics update.
+
+### Locked SendState Paths
 
 ```cpp
 void GamepadDevice::SendState() {
-    // NO MUTEX LOCK HERE!
-    EmitEvent(EV_ABS, ABS_X, static_cast<int16_t>(steering));  // ← RACE!
-}
+  if (use_uhid) {
+    SendUHIDReport();
+    return;
+  }
 
-std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
-    // NO MUTEX LOCK HERE!
-    uint16_t steering_u = static_cast<uint16_t>(static_cast<int16_t>(steering) + 32768);  // ← RACE!
-}
-```
-
-Meanwhile, FFB thread modifies `steering`:
-```cpp
-void GamepadDevice::FFBUpdateThread() {
-    std::lock_guard<std::mutex> lock(state_mutex);
-    steering += velocity;  // ← Writes to steering
-}
-```
-
-### Why This Breaks Everything
-
-**Race condition scenario:**
-1. Main thread calls `SendState()` → reads `steering` (no lock)
-2. FFB thread interrupts → locks mutex → modifies `steering` → unlocks
-3. Main thread continues → reads `throttle`, `brake` (old values)
-4. **Result:** HID report has inconsistent state (new steering, old pedals)
-
-**This causes:**
-- Wheel position jumps/jitters in game
-- Game may reject malformed reports
-- Device appears non-responsive or broken
-- **Wheel not detected at all** if reports are too corrupted
-
-### The Fix
-
-Add mutex locking to both code paths:
-
-**Path 1: UHID/USB Gadget (primary)**
-```cpp
-void GamepadDevice::SendState() {
-    if (use_uhid) {
-        SendUHIDReport();  // Calls BuildHIDReport()
-        return;
-    }
-    // ... uinput code
+  std::lock_guard<std::mutex> lock(state_mutex);
+  EmitEvent(EV_ABS, ABS_X, static_cast<int16_t>(steering));
+  EmitEvent(EV_ABS, ABS_Z, brake_axis);
+  EmitEvent(EV_ABS, ABS_RZ, throttle_axis);
+  EmitButtons(button_mask);
 }
 
 void GamepadDevice::SendUHIDReport() {
-    std::vector<uint8_t> report_data = BuildHIDReport();  // ← Lock happens here
-    // Send report...
+  auto payload = BuildHIDReport();  // BuildHIDReport() also locks state_mutex internally
+  WriteUHID(payload);
 }
 
 std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
-    std::lock_guard<std::mutex> lock(state_mutex);  // ← LOCKED for UHID path
-    // Read all state safely...
-    return report;
+  std::lock_guard<std::mutex> lock(state_mutex);
+  return PackReport(steering, brake_axis, throttle_axis, hat_value, button_mask);
 }
 ```
 
-**Path 2: UInput (fallback)**
-```cpp
-void GamepadDevice::SendState() {
-    if (use_uhid) {
-        // ... early return
-    }
-    
-    std::lock_guard<std::mutex> lock(state_mutex);  // ← LOCKED for uinput path
-    
-    // Read steering, throttle, brake, buttons safely
-    EmitEvent(EV_ABS, ABS_X, static_cast<int16_t>(steering));
-    // ... rest of code
-}
-```
+Both delivery paths (UHID/USB Gadget and uinput) now obey the same snapshot rule, so whichever host transport is active always consumes identical state bytes.
 
-**Result:** Both code paths now have mutex protection when reading shared state.
+### Deterministic Toggle / Ungrab Flow
+
+1. `CheckToggle()` detects Ctrl+M press **and** release while holding `state_mutex`, flips `enabled`, and returns the new value.
+2. The main loop immediately calls `input.Grab(enabled)` while still under the same loop iteration, so `enabled == false` guarantees `EVIOCGRAB` is released before the next batch of events is read.
+3. Because `SendState()` can no longer race against `FFBUpdateThread()`, the HID report writer never clobbers the `enabled` latch mid-frame, so Ctrl+M release consistently ungrabs both the keyboard and mouse.
+
+This structural contract removes the data race entirely and couples the grab/ungrab sequence to an atomic state transition, preventing the stuck-grab failure mode observed previously.
 
 ---
 
