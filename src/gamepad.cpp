@@ -1047,34 +1047,26 @@ void GamepadDevice::USBGadgetPollingThread() {
         }
         if (pfd.revents & POLLOUT) {
             std::cout << "[DEBUG][USBGadgetPollingThread] POLLOUT ready, count=" << gadget_loop_counter << std::endl;
+            // Best practice: never hold state_mutex during blocking I/O
             std::vector<uint8_t> report;
-            bool got_lock = false;
-            for (int try_count = 0; try_count < 20; ++try_count) { // Try for up to 10ms
-                if (!gadget_running || !running) break;
-                got_lock = state_mutex.try_lock();
-                if (got_lock) break;
-                usleep(500); // 0.5ms
-            }
-            if (!got_lock) {
-                std::cout << "[DEBUG][USBGadgetPollingThread] Could not acquire state_mutex, skipping write, gadget_running=" << gadget_running << ", running=" << running << std::endl;
-            } else {
+            {
+                std::lock_guard<std::mutex> lock(state_mutex);
                 report = BuildHIDReport();
-                state_mutex.unlock();
-                std::cout << "[DEBUG][USBGadgetPollingThread] before write, fd=" << fd << ", count=" << gadget_loop_counter << std::endl;
-                ssize_t bytes = write(fd, report.data(), report.size());
-                std::cout << "[DEBUG][USBGadgetPollingThread] after write, bytes=" << bytes << ", fd=" << fd << ", count=" << gadget_loop_counter << std::endl;
-                if (!gadget_running || !running) {
-                    std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop after write (post-check), count=" << gadget_loop_counter << std::endl;
-                    break;
-                }
-                if (bytes < 0) {
-                    if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                        if (errno == ESHUTDOWN || errno == ECONNRESET) {
-                            std::cout << "USB Gadget device disconnected" << std::endl;
-                            break;
-                        }
-                        std::cerr << "USB Gadget write error: " << strerror(errno) << std::endl;
+            }
+            std::cout << "[DEBUG][USBGadgetPollingThread] before write, fd=" << fd << ", count=" << gadget_loop_counter << std::endl;
+            ssize_t bytes = write(fd, report.data(), report.size());
+            std::cout << "[DEBUG][USBGadgetPollingThread] after write, bytes=" << bytes << ", fd=" << fd << ", count=" << gadget_loop_counter << std::endl;
+            if (!gadget_running || !running) {
+                std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop after write (post-check), count=" << gadget_loop_counter << std::endl;
+                break;
+            }
+            if (bytes < 0) {
+                if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                    if (errno == ESHUTDOWN || errno == ECONNRESET) {
+                        std::cout << "USB Gadget device disconnected" << std::endl;
+                        break;
                     }
+                    std::cerr << "USB Gadget write error: " << strerror(errno) << std::endl;
                 }
             }
         }
