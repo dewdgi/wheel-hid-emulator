@@ -18,9 +18,9 @@ std::atomic<bool> running{true};
 
 void signal_handler(int signal) {
     if (signal == SIGINT) {
-        std::cout << "\nReceived Ctrl+C, shutting down..." << std::endl;
+        std::cout << "\n[DEBUG][signal_handler] Received Ctrl+C, shutting down..." << std::endl;
         running = false;
-        std::cout << "[DEBUG] signal_handler set running=" << running << std::endl;
+        std::cout << "[DEBUG][signal_handler] set running=" << running << std::endl;
     }
 }
 
@@ -315,7 +315,8 @@ int main(int argc, char* argv[]) {
         ++loop_counter;
     }
     std::cout << "[DEBUG][main] Main loop exited, running=" << running << std::endl;
+    std::cout << "[DEBUG][main] main loop exited, running=" << running << std::endl;
     input.Grab(false);
-    std::cout << "Goodbye!" << std::endl;
+    std::cout << "[DEBUG][main] Goodbye!" << std::endl;
     return 0;
 }

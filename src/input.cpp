@@ -263,6 +263,9 @@ void Input::Read(int& mouse_dx) {
     std::cout << "[DEBUG][Input::Read] Before poll, nfds=" << nfds << ", running=" << running << std::endl;
     int ret = (nfds > 0) ? poll(pfds, nfds, timeout) : 0;
     std::cout << "[DEBUG][Input::Read] After poll, ret=" << ret << ", running=" << running << std::endl;
+    for (int i = 0; i < nfds; ++i) {
+        std::cout << "[DEBUG][Input::Read] pfds[" << i << "]: fd=" << pfds[i].fd << ", revents=" << pfds[i].revents << std::endl;
+    }
     if (ret > 0) {
         // Keyboard events
         if (kbd_fd >= 0 && (pfds[0].revents & POLLIN)) {
@@ -270,7 +273,7 @@ void Input::Read(int& mouse_dx) {
             while (true) {
                 std::cout << "[DEBUG][Input::Read] Keyboard about to read, running=" << running << std::endl;
                 ssize_t n = read(kbd_fd, &ev, sizeof(ev));
-                std::cout << "[DEBUG][Input::Read] Keyboard read n=" << n << ", running=" << running << std::endl;
+                std::cout << "[DEBUG][Input::Read] Keyboard read n=" << n << ", errno=" << errno << ", running=" << running << std::endl;
                 if (n > 0) {
                     std::cout << "[DEBUG][Input::Read] Keyboard event type=" << ev.type << ", code=" << ev.code << ", value=" << ev.value << std::endl;
                     if (ev.type == EV_KEY && ev.code < KEY_MAX) {
@@ -278,7 +281,7 @@ void Input::Read(int& mouse_dx) {
                         std::cout << "[DEBUG][Input::Read] Key event: code=" << ev.code << ", value=" << ev.value << std::endl;
                     }
                 } else {
-                    std::cout << "[DEBUG][Input::Read] Keyboard break, n=" << n << std::endl;
+                    std::cout << "[DEBUG][Input::Read] Keyboard break, n=" << n << ", errno=" << errno << std::endl;
                     break;
                 }
             }
@@ -289,7 +292,7 @@ void Input::Read(int& mouse_dx) {
             while (true) {
                 std::cout << "[DEBUG][Input::Read] Mouse about to read, running=" << running << std::endl;
                 ssize_t n = read(mouse_fd, &ev, sizeof(ev));
-                std::cout << "[DEBUG][Input::Read] Mouse read n=" << n << ", running=" << running << std::endl;
+                std::cout << "[DEBUG][Input::Read] Mouse read n=" << n << ", errno=" << errno << ", running=" << running << std::endl;
                 if (n > 0) {
                     std::cout << "[DEBUG][Input::Read] Mouse event type=" << ev.type << ", code=" << ev.code << ", value=" << ev.value << std::endl;
                     if (ev.type == EV_REL && ev.code == REL_X) {
@@ -297,11 +300,15 @@ void Input::Read(int& mouse_dx) {
                         std::cout << "[DEBUG][Input::Read] Mouse event: dx=" << ev.value << std::endl;
                     }
                 } else {
-                    std::cout << "[DEBUG][Input::Read] Mouse break, n=" << n << std::endl;
+                    std::cout << "[DEBUG][Input::Read] Mouse break, n=" << n << ", errno=" << errno << std::endl;
                     break;
                 }
             }
         }
+    } else if (ret == 0) {
+        std::cout << "[DEBUG][Input::Read] poll timeout, no events, running=" << running << std::endl;
+    } else {
+        std::cout << "[DEBUG][Input::Read] poll error, ret=" << ret << ", errno=" << errno << ", running=" << running << std::endl;
     }
     std::cout << "[DEBUG][Input::Read] Exiting, running=" << running << std::endl;
 }
