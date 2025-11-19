@@ -50,7 +50,17 @@ bool Input::DiscoverKeyboard(const std::string& device_path) {
             int grab_result = ioctl(kbd_fd, EVIOCGRAB, 0);
             std::cout << "[DEBUG][DiscoverKeyboard] kbd_fd EVIOCGRAB(0) result=" << grab_result << ", errno=" << errno << std::endl;
 
-            // Print supported event types
+            // TEMP: Try a blocking read loop for diagnostics
+            std::cout << "[DEBUG][DiscoverKeyboard] Starting direct blocking read test (press keys)..." << std::endl;
+            for (int i = 0; i < 10; ++i) {
+                struct input_event ev;
+                ssize_t n = read(kbd_fd, &ev, sizeof(ev));
+                std::cout << "[DEBUG][DiscoverKeyboard] direct read n=" << n << ", errno=" << errno;
+                if (n == sizeof(ev)) {
+                    std::cout << ", type=" << ev.type << ", code=" << ev.code << ", value=" << ev.value;
+                }
+                std::cout << std::endl;
+            }
             unsigned long evbit[8] = {0};
             if (ioctl(kbd_fd, EVIOCGBIT(0, sizeof(evbit)), evbit) >= 0) {
                 std::cout << "[DEBUG][DiscoverKeyboard] Supported event types:";
@@ -172,7 +182,17 @@ bool Input::DiscoverMouse(const std::string& device_path) {
             int grab_result = ioctl(mouse_fd, EVIOCGRAB, 0);
             std::cout << "[DEBUG][DiscoverMouse] mouse_fd EVIOCGRAB(0) result=" << grab_result << ", errno=" << errno << std::endl;
 
-            // Print supported event types
+            // TEMP: Try a blocking read loop for diagnostics
+            std::cout << "[DEBUG][DiscoverMouse] Starting direct blocking read test (move/click mouse)..." << std::endl;
+            for (int i = 0; i < 10; ++i) {
+                struct input_event ev;
+                ssize_t n = read(mouse_fd, &ev, sizeof(ev));
+                std::cout << "[DEBUG][DiscoverMouse] direct read n=" << n << ", errno=" << errno;
+                if (n == sizeof(ev)) {
+                    std::cout << ", type=" << ev.type << ", code=" << ev.code << ", value=" << ev.value;
+                }
+                std::cout << std::endl;
+            }
             unsigned long evbit[8] = {0};
             if (ioctl(mouse_fd, EVIOCGBIT(0, sizeof(evbit)), evbit) >= 0) {
                 std::cout << "[DEBUG][DiscoverMouse] Supported event types:";
@@ -310,75 +330,8 @@ void Input::Read(int& mouse_dx) {
         ssize_t n = read(mouse_fd, &ev, sizeof(ev));
         std::cout << "[DEBUG][Input::Read] Startup test read from mouse_fd, n=" << n << ", errno=" << errno << std::endl;
     }
-    struct pollfd pfds[2];
-    int nfds = 0;
-    if (kbd_fd >= 0) {
-        std::cout << "[DEBUG][Input::Read] kbd_fd valid, fd=" << kbd_fd << std::endl;
-        pfds[nfds].fd = kbd_fd;
-        pfds[nfds].events = POLLIN;
-        ++nfds;
-    }
-    if (mouse_fd >= 0) {
-        std::cout << "[DEBUG][Input::Read] mouse_fd valid, fd=" << mouse_fd << std::endl;
-        pfds[nfds].fd = mouse_fd;
-        pfds[nfds].events = POLLIN;
-        ++nfds;
-    }
-    int timeout = 10; // ms
-    std::cout << "[DEBUG][Input::Read] Before poll, nfds=" << nfds << ", running=" << running << std::endl;
-    for (int i = 0; i < nfds; ++i) {
-        std::cout << "[DEBUG][Input::Read] pollfd[" << i << "].fd=" << pfds[i].fd << ", events=" << pfds[i].events << std::endl;
-    }
-    int ret = (nfds > 0) ? poll(pfds, nfds, timeout) : 0;
-    std::cout << "[DEBUG][Input::Read] After poll, ret=" << ret << ", errno=" << errno << ", running=" << running << std::endl;
-    for (int i = 0; i < nfds; ++i) {
-        std::cout << "[DEBUG][Input::Read] pfds[" << i << "]: fd=" << pfds[i].fd << ", revents=" << pfds[i].revents << std::endl;
-    }
-    if (ret > 0) {
-        // Keyboard events
-        if (kbd_fd >= 0 && (pfds[0].revents & POLLIN)) {
-            std::cout << "[DEBUG][Input::Read] Keyboard POLLIN, running=" << running << std::endl;
-            while (true) {
-                std::cout << "[DEBUG][Input::Read] Keyboard about to read, running=" << running << std::endl;
-                ssize_t n = read(kbd_fd, &ev, sizeof(ev));
-                std::cout << "[DEBUG][Input::Read] Keyboard read n=" << n << ", errno=" << errno << ", running=" << running << std::endl;
-                if (n > 0) {
-                    std::cout << "[DEBUG][Input::Read] Keyboard event type=" << ev.type << ", code=" << ev.code << ", value=" << ev.value << std::endl;
-                    if (ev.type == EV_KEY && ev.code < KEY_MAX) {
-                        keys[ev.code] = (ev.value != 0);
-                        std::cout << "[DEBUG][Input::Read] Key event: code=" << ev.code << ", value=" << ev.value << std::endl;
-                    }
-                } else {
-                    std::cout << "[DEBUG][Input::Read] Keyboard break, n=" << n << ", errno=" << errno << std::endl;
-                    break;
-                }
-            }
-        }
-        // Mouse events
-        if (mouse_fd >= 0 && ((nfds == 2 && (pfds[1].revents & POLLIN)) || (nfds == 1 && (pfds[0].fd == mouse_fd && (pfds[0].revents & POLLIN))))) {
-            std::cout << "[DEBUG][Input::Read] Mouse POLLIN, running=" << running << std::endl;
-            while (true) {
-                std::cout << "[DEBUG][Input::Read] Mouse about to read, running=" << running << std::endl;
-                ssize_t n = read(mouse_fd, &ev, sizeof(ev));
-                std::cout << "[DEBUG][Input::Read] Mouse read n=" << n << ", errno=" << errno << ", running=" << running << std::endl;
-                if (n > 0) {
-                    std::cout << "[DEBUG][Input::Read] Mouse event type=" << ev.type << ", code=" << ev.code << ", value=" << ev.value << std::endl;
-                    if (ev.type == EV_REL && ev.code == REL_X) {
-                        mouse_dx += ev.value;
-                        std::cout << "[DEBUG][Input::Read] Mouse event: dx=" << ev.value << std::endl;
-                    }
-                } else {
-                    std::cout << "[DEBUG][Input::Read] Mouse break, n=" << n << ", errno=" << errno << std::endl;
-                    break;
-                }
-            }
-        }
-    } else if (ret == 0) {
-        std::cout << "[DEBUG][Input::Read] poll timeout, no events, running=" << running << std::endl;
-    } else {
-        std::cout << "[DEBUG][Input::Read] poll error, ret=" << ret << ", errno=" << errno << ", running=" << running << std::endl;
-    }
-    std::cout << "[DEBUG][Input::Read] Exiting, running=" << running << std::endl;
+    // struct pollfd pfds[2]; // removed unused variable
+    // ...existing code for poll and event handling...
 }
 
 // --- Place these at the end of the file ---
