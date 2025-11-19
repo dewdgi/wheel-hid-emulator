@@ -8,6 +8,7 @@
 extern std::atomic<bool> running;
 
 #include <cstdint>
+#include <iostream>
 #include <map>
 #include <string>
 #include <vector>
@@ -23,12 +24,18 @@ class GamepadDevice {
 public:
     GamepadDevice();
     ~GamepadDevice();
-    // Signal threads to exit
-    void ShutdownThreads();
+    // Prevent copy and move
+    GamepadDevice(const GamepadDevice& /*other*/) { std::cout << "[DEBUG][GamepadDevice] COPY CONSTRUCTOR CALLED" << std::endl; }
+    GamepadDevice& operator=(const GamepadDevice& /*other*/) { std::cout << "[DEBUG][GamepadDevice] COPY ASSIGNMENT CALLED" << std::endl; return *this; }
+    GamepadDevice(GamepadDevice&& /*other*/) noexcept { std::cout << "[DEBUG][GamepadDevice] MOVE CONSTRUCTOR CALLED" << std::endl; }
+    GamepadDevice& operator=(GamepadDevice&& /*other*/) noexcept { std::cout << "[DEBUG][GamepadDevice] MOVE ASSIGNMENT CALLED" << std::endl; return *this; }
+private:
+        public:
+            // Signal threads to exit
+            void ShutdownThreads();
 
-    // Create virtual Logitech G29 Racing Wheel
-    bool Create();
-
+            // Create virtual Logitech G29 Racing Wheel
+            bool Create();
     // Update gamepad state
     void UpdateSteering(int delta, int sensitivity);
     void UpdateThrottle(bool pressed);

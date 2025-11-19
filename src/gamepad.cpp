@@ -970,16 +970,22 @@ void GamepadDevice::USBGadgetPollingThread() {
     uint8_t ffb_buffer[7];  // G29 FFB commands are 7 bytes
     
     int gadget_loop_counter = 0;
-    const int poll_timeout = 20; // 20ms for responsiveness
+    const int poll_timeout = 20; // 20ms for responsiveness (must be short for shutdown)
     while (gadget_running && running) {
         std::cout << "[DEBUG][USBGadgetPollingThread] LOOP START, count=" << gadget_loop_counter << ", gadget_running=" << gadget_running << ", running=" << running << std::endl;
         if (!gadget_running) std::cout << "[DEBUG][USBGadgetPollingThread] gadget_running is false, breaking" << std::endl;
         if (!running) std::cout << "[DEBUG][USBGadgetPollingThread] running is false, breaking" << std::endl;
+        // Check shutdown flags before every poll
+        if (!gadget_running || !running) {
+            std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop before poll, count=" << gadget_loop_counter << std::endl;
+            break;
+        }
         std::cout << "[DEBUG][USBGadgetPollingThread] before poll, count=" << gadget_loop_counter << std::endl;
         int ret = poll(&pfd, 1, poll_timeout);
         std::cout << "[DEBUG][USBGadgetPollingThread] after poll, ret=" << ret << ", gadget_running=" << gadget_running << ", running=" << running << ", count=" << gadget_loop_counter << std::endl;
+        // Check shutdown flags after poll, even if no events
         if (!gadget_running || !running) {
-            std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop, count=" << gadget_loop_counter << std::endl;
+            std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop after poll, count=" << gadget_loop_counter << std::endl;
             break;
         }
         if (ret < 0) {
