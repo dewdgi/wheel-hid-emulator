@@ -573,7 +573,7 @@ void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
     bool changed = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
-        constexpr float base_gain = 0.05f;  // Matches legacy feel after removing physics integrator
+        constexpr float base_gain = 0.05f;  // Keeps mouse steering response consistent with earlier builds
         const float gain = static_cast<float>(sensitivity) * base_gain;
         const float max_step = 2000.0f;
         float step = delta * gain;
@@ -697,7 +697,7 @@ void GamepadDevice::SendState() {
     // Lock state mutex to prevent race with FFB thread
     std::lock_guard<std::mutex> lock(state_mutex);
     
-    // UInput path (legacy)
+    // UInput path (fallback)
     // Send steering wheel position - convert float to int16_t
     EmitEvent(EV_ABS, ABS_X, static_cast<int16_t>(steering));
     

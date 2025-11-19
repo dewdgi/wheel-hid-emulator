@@ -72,7 +72,7 @@
   - **State:**
     - `sensitivity`, `keyboard_device`, `mouse_device`, `button_map`
   - **Methods:**
-    - `Load()`, `LoadFromFile(const char*)`, `SaveDefault(const char*)`, `UpdateDevices(const std::string&, const std::string&)`, `ParseINI(const std::string&)`
+    - `Load()`, `LoadFromFile(const char*)`, `SaveDefault(const char*)`, `ParseINI(const std::string&)`
 
 ### Threading Model
 - **Main thread:** runs main loop, handles input, state update, and report sending
@@ -198,7 +198,6 @@ wheel-hid-emulator/
 **Key Methods:**
 - `Load()`: Loads config from `/etc/wheel-emulator.conf`
 - `SaveDefault(const char*)`: Writes default config
-- `UpdateDevices()`: Updates device paths
 - `ParseINI(const std::string&)`: INI parsing logic
 
 ---
@@ -271,7 +270,6 @@ wheel-hid-emulator/
 ### `src/config.cpp`/`.h`
 - `Config::Load()`
 - `Config::SaveDefault()`
-- `Config::UpdateDevices()`
 - `Config::ParseINI()`
 - `Config::LoadFromFile()`
 
@@ -496,7 +494,7 @@ Current (FFB physics improvements + race condition fix **applied**)
   - FFB communication possible
   - No USB Gadget hardware needed
 
-#### Method 3: UInput (Legacy)
+#### Method 3: UInput (Fallback)
 - **Path:** `/dev/uinput`
 - **Creates:** Input device via uinput subsystem
 - **Driver Binding:** Generic joystick/gamepad, no hid-lg

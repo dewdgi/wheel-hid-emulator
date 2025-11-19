@@ -1,25 +1,16 @@
-#include "input.h"
-#include "gamepad.h"
-
-void notify_all_shutdown(Input& input, GamepadDevice& gamepad);
-
-#include <iostream>
 #include <atomic>
-#include <csignal>
+#include <chrono>
+#include <cstring>
+#include <iostream>
+#include <linux/input-event-codes.h>
 #include <signal.h>
 #include <unistd.h>
-#include <cstring>
-#include <cerrno>
-#include <vector>
-#include <fcntl.h>
-#include <dirent.h>
-#include <sys/ioctl.h>
-#include <linux/input.h>
-#include <linux/input-event-codes.h>
-#include <chrono>
+
 #include "config.h"
-#include "input.h"
 #include "gamepad.h"
+#include "input.h"
+
+void notify_all_shutdown(Input& input, GamepadDevice& gamepad);
 
 std::atomic<bool> running{true};
 
@@ -39,18 +30,6 @@ bool check_root() {
         return false;
     }
     return true;
-}
-
-#define BITS_PER_LONG (sizeof(long) * 8)
-#define NBITS(x) ((((x)-1)/BITS_PER_LONG)+1)
-#define OFF(x)  ((x)%BITS_PER_LONG)
-#define BIT(x)  (1UL<<OFF(x))
-#define LONG(x) ((x)/BITS_PER_LONG)
-#define test_bit(bit, array) ((array[LONG(bit)] >> OFF(bit)) & 1)
-
-int run_detection_mode() {
-    // ...existing code for run_detection_mode...
-    return 0;
 }
 
 // --- main() at very end of file ---

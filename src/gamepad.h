@@ -115,7 +115,7 @@ private:
     float ShapeFFBTorque(float raw_force) const;
     bool ApplySteeringLocked();
 
-    // UInput methods (legacy)
+    // UInput methods (fallback path)
     void EmitEvent(uint16_t type, uint16_t code, int32_t value);
     int16_t ClampSteering(int16_t value);
 };

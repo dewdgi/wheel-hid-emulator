@@ -19,9 +19,6 @@ public:
     // Save default configuration to specified path
     void SaveDefault(const char* path);
     
-    // Update device paths in existing config
-    bool UpdateDevices(const std::string& kbd_path, const std::string& mouse_path);
-
 private:
     bool LoadFromFile(const char* path);
     void ParseINI(const std::string& content);
