@@ -112,7 +112,7 @@ int main(int, char*[]) {
         std::cout << "[DEBUG][main] after sleep, running=" << running << ", count=" << loop_counter << std::endl;
         ++loop_counter;
     }
-    std::cout << "[DEBUG][main] Main loop exited, running=" << running << std::endl;
+        std::cout << "[DEBUG][main] Main loop exited, running=" << running << std::endl;
     input.Grab(false);
     std::cout << "[DEBUG][main] Goodbye!" << std::endl;
     return 0;
