@@ -14,7 +14,16 @@
 
 GamepadDevice::GamepadDevice() 
         : fd(-1), use_uhid(false), use_gadget(false), gadget_running(false),
-            enabled(false), steering(0), throttle(0.0f), brake(0.0f), dpad_x(0), dpad_y(0),
+            enabled(false), steering(0), throttle(0.0f), brake(0.0f), clutch(0.0f), dpad_x(0), dpad_y(0),
+            // Clutch axis update (ramp like throttle/brake)
+            void GamepadDevice::UpdateClutch(bool pressed) {
+                std::lock_guard<std::mutex> lock(state_mutex);
+                if (pressed) {
+                    clutch = (clutch + 3.0f > 100.0f) ? 100.0f : clutch + 3.0f;
+                } else {
+                    clutch = (clutch - 3.0f < 0.0f) ? 0.0f : clutch - 3.0f;
+                }
+            }
             ffb_force(0), ffb_autocenter(0), ffb_enabled(true), user_torque(0.0f) {
 }
 
@@ -591,8 +600,9 @@ void GamepadDevice::SendState() {
     // Send steering wheel position - convert float to int16_t
     EmitEvent(EV_ABS, ABS_X, static_cast<int16_t>(steering));
     
-    // Send Y axis (unused for G29, always at maximum like real wheel)
-    EmitEvent(EV_ABS, ABS_Y, 32767);
+    // Send clutch (ABS_Y)
+    int16_t clutch_val = 32767 - static_cast<int16_t>(clutch * 655.35f);
+    EmitEvent(EV_ABS, ABS_Y, clutch_val);
     
     // Send throttle and brake as pedal axes (G29 standard)
     // Real G29 pedals are inverted: 32767 at rest, -32768 when fully pressed
@@ -657,9 +667,10 @@ std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
     report[0] = steering_u & 0xFF;
     report[1] = (steering_u >> 8) & 0xFF;
     
-    // Y axis: Unused - always 65535 (like real G29)
-    report[2] = 0xFF;
-    report[3] = 0xFF;
+    // Y axis: Clutch - inverted, 0-100% -> 65535-0
+    uint16_t clutch_u = 65535 - static_cast<uint16_t>(clutch * 655.35f);
+    report[2] = clutch_u & 0xFF;
+    report[3] = (clutch_u >> 8) & 0xFF;
     
     // Z axis: Brake - inverted, 0-100% -> 65535-0
     uint16_t brake_u = 65535 - static_cast<uint16_t>(brake * 655.35f);

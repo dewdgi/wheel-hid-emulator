@@ -291,6 +291,7 @@ int main(int argc, char* argv[]) {
             gamepad.UpdateSteering(mouse_dx, config.sensitivity);
             gamepad.UpdateThrottle(input.IsKeyPressed(KEY_W));
             gamepad.UpdateBrake(input.IsKeyPressed(KEY_S));
+            gamepad.UpdateClutch(input.IsKeyPressed(KEY_A));
             gamepad.UpdateButtons(input);
             gamepad.UpdateDPad(input);
             gamepad.SendState();

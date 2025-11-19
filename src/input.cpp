@@ -276,17 +276,17 @@ void Input::Grab(bool enable) {
     
     if (kbd_fd >= 0) {
         if (ioctl(kbd_fd, EVIOCGRAB, grab) < 0) {
-            std::cerr << "Failed to " << (enable ? "grab" : "ungrab") << " keyboard" << std::endl;
+            std::cerr << "Failed to " << (enable ? "grab" : "ungrab") << " keyboard (fd=" << kbd_fd << ") errno=" << errno << std::endl;
         } else {
-            std::cout << (enable ? "Grabbed" : "Ungrabbed") << " keyboard" << std::endl;
+            std::cout << (enable ? "Grabbed" : "Ungrabbed") << " keyboard (fd=" << kbd_fd << ")" << std::endl;
         }
     }
-    
+
     if (mouse_fd >= 0) {
         if (ioctl(mouse_fd, EVIOCGRAB, grab) < 0) {
-            std::cerr << "Failed to " << (enable ? "grab" : "ungrab") << " mouse" << std::endl;
+            std::cerr << "Failed to " << (enable ? "grab" : "ungrab") << " mouse (fd=" << mouse_fd << ") errno=" << errno << std::endl;
         } else {
-            std::cout << (enable ? "Grabbed" : "Ungrabbed") << " mouse" << std::endl;
+            std::cout << (enable ? "Grabbed" : "Ungrabbed") << " mouse (fd=" << mouse_fd << ")" << std::endl;
         }
     }
 }

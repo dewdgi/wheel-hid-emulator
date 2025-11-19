@@ -26,6 +26,7 @@ public:
     void UpdateBrake(bool pressed);
     void UpdateButtons(const Input& input);
     void UpdateDPad(const Input& input);
+    void UpdateClutch(bool pressed);
 
     // Send state to virtual device
     void SendState();
@@ -56,6 +57,7 @@ private:
     float steering;
     float throttle;
     float brake;
+    float clutch;
     std::map<std::string, bool> buttons;
     int8_t dpad_x;
     int8_t dpad_y;
