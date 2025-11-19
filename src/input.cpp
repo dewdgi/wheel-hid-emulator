@@ -13,6 +13,8 @@
 #include <dirent.h>
 #include <sys/ioctl.h>
 #include <linux/input-event-codes.h>
+#include <atomic>
+extern std::atomic<bool> running;
 #include <poll.h>
 
 // Bit manipulation macros for input device capabilities
@@ -245,7 +247,7 @@ bool Input::DiscoverMouse(const std::string& device_path) {
 void Input::Read(int& mouse_dx) {
     mouse_dx = 0;
     struct input_event ev;
-    // Use poll to wait for events with a timeout, so shutdown is responsive
+    std::cout << "[DEBUG][Input::Read] Entered, running=" << running << std::endl;
     struct pollfd pfds[2];
     int nfds = 0;
     if (kbd_fd >= 0) {
@@ -259,12 +261,16 @@ void Input::Read(int& mouse_dx) {
         ++nfds;
     }
     int timeout = 10; // ms
+    std::cout << "[DEBUG][Input::Read] Before poll, nfds=" << nfds << ", running=" << running << std::endl;
     int ret = (nfds > 0) ? poll(pfds, nfds, timeout) : 0;
+    std::cout << "[DEBUG][Input::Read] After poll, ret=" << ret << ", running=" << running << std::endl;
     if (ret > 0) {
         // Keyboard events
         if (kbd_fd >= 0 && (pfds[0].revents & POLLIN)) {
+            std::cout << "[DEBUG][Input::Read] Keyboard POLLIN, running=" << running << std::endl;
             while (true) {
                 ssize_t n = read(kbd_fd, &ev, sizeof(ev));
+                std::cout << "[DEBUG][Input::Read] Keyboard read n=" << n << ", running=" << running << std::endl;
                 if (n > 0) {
                     if (ev.type == EV_KEY && ev.code < KEY_MAX) {
                         keys[ev.code] = (ev.value != 0);
@@ -277,8 +283,10 @@ void Input::Read(int& mouse_dx) {
         }
         // Mouse events
         if (mouse_fd >= 0 && ((nfds == 2 && (pfds[1].revents & POLLIN)) || (nfds == 1 && (pfds[0].fd == mouse_fd && (pfds[0].revents & POLLIN))))) {
+            std::cout << "[DEBUG][Input::Read] Mouse POLLIN, running=" << running << std::endl;
             while (true) {
                 ssize_t n = read(mouse_fd, &ev, sizeof(ev));
+                std::cout << "[DEBUG][Input::Read] Mouse read n=" << n << ", running=" << running << std::endl;
                 if (n > 0) {
                     if (ev.type == EV_REL && ev.code == REL_X) {
                         mouse_dx += ev.value;
@@ -290,6 +298,7 @@ void Input::Read(int& mouse_dx) {
             }
         }
     }
+    std::cout << "[DEBUG][Input::Read] Exiting, running=" << running << std::endl;
 }
 
 // --- Place these at the end of the file ---

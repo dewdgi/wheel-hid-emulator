@@ -281,19 +281,20 @@ int main(int argc, char* argv[]) {
 
     // Main loop
     while (true) {
-        std::cout << "[DEBUG] top of loop, running=" << running << std::endl;
+        std::cout << "[DEBUG][main] top of loop, running=" << running << std::endl;
         if (!running) {
-            std::cout << "[DEBUG] running is false, breaking main loop" << std::endl;
+            std::cout << "[DEBUG][main] running is false, breaking main loop" << std::endl;
             break;
         }
         int mouse_dx = 0;
-        std::cout << "[DEBUG] calling input.Read()" << std::endl;
+        std::cout << "[DEBUG][main] calling input.Read()" << std::endl;
         input.Read(mouse_dx);
+        std::cout << "[DEBUG][main] after input.Read, running=" << running << std::endl;
         bool toggle = input.CheckToggle();
         bool enabled = gamepad.IsEnabled();
-        std::cout << "[DEBUG] running=" << running << ", toggle=" << toggle << ", enabled=" << enabled << std::endl;
+        std::cout << "[DEBUG][main] running=" << running << ", toggle=" << toggle << ", enabled=" << enabled << std::endl;
         if (toggle) {
-            std::cout << "[DEBUG] Toggle detected!" << std::endl;
+            std::cout << "[DEBUG][main] Toggle detected!" << std::endl;
             gamepad.ToggleEnabled(input);
         }
         if (enabled) {
@@ -307,9 +308,9 @@ int main(int argc, char* argv[]) {
         }
         gamepad.ProcessUHIDEvents();
         usleep(10000); // Sleep 10ms to avoid busy-waiting
-        std::cout << "[DEBUG] main loop slept 10ms, running=" << running << std::endl;
+        std::cout << "[DEBUG][main] main loop slept 10ms, running=" << running << std::endl;
         if (!running) {
-            std::cout << "[DEBUG] running is false after sleep, breaking main loop" << std::endl;
+            std::cout << "[DEBUG][main] running is false after sleep, breaking main loop" << std::endl;
             break;
         }
     }

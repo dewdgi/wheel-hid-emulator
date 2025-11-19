@@ -909,6 +909,7 @@ void GamepadDevice::USBGadgetPollingThread() {
     uint8_t ffb_buffer[7];  // G29 FFB commands are 7 bytes
     
     while (gadget_running && running) {
+        std::cout << "[DEBUG][USBGadgetPollingThread] top of loop, gadget_running=" << gadget_running << ", running=" << running << std::endl;
         // Wait for either read or write ready (with timeout)
         int ret = poll(&pfd, 1, 100);  // 100ms timeout
         
@@ -974,6 +975,7 @@ void GamepadDevice::FFBUpdateThread() {
     float velocity = 0.0f;  // Current wheel rotation speed
     
     while (ffb_running && running) {
+        std::cout << "[DEBUG][FFBUpdateThread] top of loop, ffb_running=" << ffb_running << ", running=" << running << std::endl;
         {
             std::lock_guard<std::mutex> lock(state_mutex);
             
