@@ -51,6 +51,10 @@ See `/etc/wheel-emulator.conf` for suggested game actions.
 
 ## Configuration
 
+ 
+**Manual device overrides:**
+- Leave `keyboard=` or `mouse=` blank to keep auto-detection for that device type.
+- Fill **both** fields to pin the emulator to those exact `/dev/input/eventX` paths; all previously auto-discovered devices are dropped so only the pinned devices are ever grabbed.
 Edit `/etc/wheel-emulator.conf`:
 
 ```ini

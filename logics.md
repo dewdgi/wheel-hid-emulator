@@ -61,6 +61,7 @@
   - **Methods:**
     - `DiscoverKeyboard(const std::string&)`, `DiscoverMouse(const std::string&)` — store overrides and trigger refresh
     - `RefreshDevices()` — rescans `/dev/input` and hotplugs active devices (auto + manual)
+      - When both keyboard and mouse overrides are supplied, auto-detected devices are immediately closed and skipped so only the pinned descriptors remain
     - `WaitForEvents(int timeout_ms)` — polls all tracked descriptors (returns early on activity)
     - `Read(int&)` — drains device queues, updates aggregated key/mouse state, drops disconnected devices
     - `CheckToggle()` — returns true on Ctrl+M press edge
