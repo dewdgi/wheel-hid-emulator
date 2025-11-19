@@ -994,7 +994,7 @@ void GamepadDevice::USBGadgetPollingThread() {
     uint8_t ffb_buffer[7];  // G29 FFB commands are 7 bytes
     
     int gadget_loop_counter = 0;
-    const int poll_timeout = 20; // 20ms for responsiveness (must be short for shutdown)
+    const int poll_timeout = 1; // 1ms for maximum shutdown responsiveness
     while (gadget_running && running) {
         std::cout << "[DEBUG][USBGadgetPollingThread] LOOP START, count=" << gadget_loop_counter << ", gadget_running=" << gadget_running << ", running=" << running << std::endl;
         if (!gadget_running) std::cout << "[DEBUG][USBGadgetPollingThread] gadget_running is false, breaking" << std::endl;
@@ -1007,6 +1007,10 @@ void GamepadDevice::USBGadgetPollingThread() {
         std::cout << "[DEBUG][USBGadgetPollingThread] before poll, count=" << gadget_loop_counter << std::endl;
         int ret = poll(&pfd, 1, poll_timeout);
         std::cout << "[DEBUG][USBGadgetPollingThread] after poll, ret=" << ret << ", gadget_running=" << gadget_running << ", running=" << running << ", count=" << gadget_loop_counter << std::endl;
+        if (!gadget_running || !running) {
+            std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop after poll (post-check), count=" << gadget_loop_counter << std::endl;
+            break;
+        }
         // Check shutdown flags after poll, even if no events
         if (!gadget_running || !running) {
             std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop after poll, count=" << gadget_loop_counter << std::endl;
@@ -1023,6 +1027,10 @@ void GamepadDevice::USBGadgetPollingThread() {
             std::cout << "[DEBUG][USBGadgetPollingThread] before read, count=" << gadget_loop_counter << std::endl;
             ssize_t bytes = read(fd, ffb_buffer, sizeof(ffb_buffer));
             std::cout << "[DEBUG][USBGadgetPollingThread] after read, bytes=" << bytes << ", count=" << gadget_loop_counter << std::endl;
+            if (!gadget_running || !running) {
+                std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop after read (post-check), count=" << gadget_loop_counter << std::endl;
+                break;
+            }
             if (bytes == 7) {
                 ParseFFBCommand(ffb_buffer, bytes);
             } else if (bytes < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
@@ -1047,6 +1055,10 @@ void GamepadDevice::USBGadgetPollingThread() {
                 std::cout << "[DEBUG][USBGadgetPollingThread] before write, count=" << gadget_loop_counter << std::endl;
                 ssize_t bytes = write(fd, report.data(), report.size());
                 std::cout << "[DEBUG][USBGadgetPollingThread] after write, bytes=" << bytes << ", count=" << gadget_loop_counter << std::endl;
+                if (!gadget_running || !running) {
+                    std::cout << "[DEBUG][USBGadgetPollingThread] breaking loop after write (post-check), count=" << gadget_loop_counter << std::endl;
+                    break;
+                }
                 if (bytes < 0) {
                     if (errno != EAGAIN && errno != EWOULDBLOCK) {
                         if (errno == ESHUTDOWN || errno == ECONNRESET) {
@@ -1064,8 +1076,8 @@ void GamepadDevice::USBGadgetPollingThread() {
         }
         ++gadget_loop_counter;
     }
-    std::cout << "[DEBUG][USBGadgetPollingThread] thread stopped, running=" << running << std::endl;
-    std::cout << "[DEBUG][USBGadgetPollingThread] EXITED" << std::endl;
+    std::cout << "[DEBUG][USBGadgetPollingThread] thread stopped, running=" << running << ", gadget_running=" << gadget_running << std::endl;
+    std::cout << "[DEBUG][USBGadgetPollingThread] EXITED (end of thread)" << std::endl;
 }
 
 void GamepadDevice::FFBUpdateThread() {
