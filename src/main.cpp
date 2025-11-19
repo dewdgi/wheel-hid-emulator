@@ -19,6 +19,7 @@ void signal_handler(int signal) {
     if (signal == SIGINT) {
         std::cout << "\nReceived Ctrl+C, shutting down..." << std::endl;
         running = false;
+        std::cout << "[DEBUG] signal_handler set running=" << running << std::endl;
     }
 }
 
@@ -278,15 +279,18 @@ int main(int argc, char* argv[]) {
     std::cout << std::endl;
 
     // Main loop
-    int debug_iter = 0;
-    while (running) {
+    while (true) {
+        std::cout << "[DEBUG] top of loop, running=" << running << std::endl;
+        if (!running) {
+            std::cout << "[DEBUG] running is false, breaking main loop" << std::endl;
+            break;
+        }
         int mouse_dx = 0;
+        std::cout << "[DEBUG] calling input.Read()" << std::endl;
         input.Read(mouse_dx);
         bool toggle = input.CheckToggle();
         bool enabled = gamepad.IsEnabled();
-        if (debug_iter++ % 20 == 0) {
-            std::cout << "[DEBUG] running=" << running << ", toggle=" << toggle << ", enabled=" << enabled << std::endl;
-        }
+        std::cout << "[DEBUG] running=" << running << ", toggle=" << toggle << ", enabled=" << enabled << std::endl;
         if (toggle) {
             std::cout << "[DEBUG] Toggle detected!" << std::endl;
             gamepad.ToggleEnabled(input);
