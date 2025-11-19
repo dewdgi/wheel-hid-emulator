@@ -2,7 +2,11 @@
 
 ## Full Logical Structure: Loops, Conditionals, and Control Flow
 
+
 This section documents all logical constructs in the codebase, including every loop, conditional, function, and major control flow structure, for strict audit and traceability.
+
+**Critical Note (as of Nov 2025):**
+All input reading and device I/O in the main loop (e.g., `input.Read()`) must be performed in non-blocking mode or be interruptible by signals (handle `EINTR`), to ensure the main loop remains responsive to both Ctrl+M (enable/disable) and Ctrl+C (shutdown). Blocking I/O without signal interruption can cause the main loop to hang, making the emulator unresponsive to user input and shutdown requests.
 
 ### `src/main.cpp`
 
@@ -110,8 +114,8 @@ This section documents all logical constructs in the codebase, including every l
       - `if (test_bit(REL_X, rel_bitmask)) ...`
       - `if (candidates.empty()) return false;`
     - `Read(int&)`
-      - `if (kbd_fd >= 0) while (read(...))` (keyboard event loop)
-      - `if (mouse_fd >= 0) while (read(...))` (mouse event loop)
+      - `if (kbd_fd >= 0) while (read(...))` (keyboard event loop, **must be non-blocking or handle EINTR**)
+      - `if (mouse_fd >= 0) while (read(...))` (mouse event loop, **must be non-blocking or handle EINTR**)
       - `if (ev.type == EV_KEY && ev.code < KEY_MAX)`
       - `if (ev.type == EV_REL && ev.code == REL_X)`
     - `CheckToggle()`
@@ -148,6 +152,7 @@ This section documents all logical constructs in the codebase, including every l
 
 **Summary:**
 - All logical constructs (loops, if/else, switches, function definitions, mutexes, threads, and major control flow) are now explicitly documented and mapped to their source files and line-level logic. This enables full traceability and strict audit compliance.
+- **All input reading and device I/O in the main loop must be non-blocking or signal-interruptible (handle EINTR) to guarantee responsiveness to Ctrl+M and Ctrl+C.**
 
 # Wheel HID Emulator: Logic & Architecture
 
@@ -177,6 +182,7 @@ wheel-hid-emulator/
 
 ## Code Structure: Loops, Threads, and Function Calls
 
+
 ### Main Loop (`src/main.cpp`)
 
 **Location:** `int main()`
@@ -188,7 +194,7 @@ wheel-hid-emulator/
 4. Discover keyboard/mouse (`Input::DiscoverKeyboard()`, `Input::DiscoverMouse()`)
 5. Print status, wait for enable
 6. **Main loop (while running):**
-  - `input.Read(mouse_dx)`
+  - `input.Read(mouse_dx)` (**must be non-blocking or handle EINTR to remain responsive to signals and toggles**)
   - `input.CheckToggle()` (Ctrl+M toggles enabled state)
   - If enabled:
     - `gamepad.UpdateSteering(mouse_dx, config.sensitivity)`
@@ -736,6 +742,9 @@ while (running) {
 3. Ungrab input devices
 4. Destroy virtual device
 5. Close file descriptors
+
+**Responsiveness Guarantee:**
+- All input reading and device I/O in the main loop must be non-blocking or handle EINTR (signal interruption), so that Ctrl+M (enable/disable) and Ctrl+C (shutdown) are always processed promptly. Blocking I/O without signal handling can cause the emulator to become unresponsive.
 
 ---
 

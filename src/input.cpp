@@ -239,21 +239,55 @@ bool Input::DiscoverMouse(const std::string& device_path) {
 void Input::Read(int& mouse_dx) {
     mouse_dx = 0;
     struct input_event ev;
-    
-    // Read keyboard events
+
+    // Read keyboard events (non-blocking, handle EINTR/EAGAIN)
     if (kbd_fd >= 0) {
-        while (read(kbd_fd, &ev, sizeof(ev)) > 0) {
-            if (ev.type == EV_KEY && ev.code < KEY_MAX) {
-                keys[ev.code] = (ev.value != 0);
+        while (true) {
+            ssize_t n = read(kbd_fd, &ev, sizeof(ev));
+            if (n > 0) {
+                if (ev.type == EV_KEY && ev.code < KEY_MAX) {
+                    keys[ev.code] = (ev.value != 0);
+                }
+            } else if (n == 0) {
+                // End of file (should not happen for input devices)
+                break;
+            } else {
+                if (errno == EINTR) {
+                    // Interrupted by signal, retry
+                    continue;
+                } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    // No more data to read (non-blocking)
+                    break;
+                } else {
+                    // Other error
+                    break;
+                }
             }
         }
     }
-    
-    // Read mouse events
+
+    // Read mouse events (non-blocking, handle EINTR/EAGAIN)
     if (mouse_fd >= 0) {
-        while (read(mouse_fd, &ev, sizeof(ev)) > 0) {
-            if (ev.type == EV_REL && ev.code == REL_X) {
-                mouse_dx += ev.value;
+        while (true) {
+            ssize_t n = read(mouse_fd, &ev, sizeof(ev));
+            if (n > 0) {
+                if (ev.type == EV_REL && ev.code == REL_X) {
+                    mouse_dx += ev.value;
+                }
+            } else if (n == 0) {
+                // End of file (should not happen for input devices)
+                break;
+            } else {
+                if (errno == EINTR) {
+                    // Interrupted by signal, retry
+                    continue;
+                } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    // No more data to read (non-blocking)
+                    break;
+                } else {
+                    // Other error
+                    break;
+                }
             }
         }
     }
