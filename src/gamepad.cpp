@@ -983,6 +983,7 @@ void GamepadDevice::FFBUpdateThread() {
         {
             std::lock_guard<std::mutex> lock(state_mutex);
             std::cout << "[DEBUG][FFBUpdateThread] after lock_guard, thread=" << std::this_thread::get_id() << std::endl;
+            std::cout << "[DEBUG][FFBUpdateThread] running after lock_guard = " << running << std::endl;
             if (!running) {
                 std::cout << "[DEBUG][FFBUpdateThread] running is false after lock_guard, breaking" << std::endl;
                 break;
