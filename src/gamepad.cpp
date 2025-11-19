@@ -77,8 +77,9 @@ GamepadDevice::~GamepadDevice() {
 
 GamepadDevice::GamepadDevice() 
         : fd(-1), use_uhid(false), use_gadget(false), gadget_running(false),
-            enabled(false), steering(0), throttle(0.0f), brake(0.0f), clutch(0.0f), dpad_x(0), dpad_y(0),
-            ffb_force(0), ffb_autocenter(0), ffb_enabled(true), user_torque(0.0f),
+            enabled(false), steering(0), user_steering(0.0f), ffb_offset(0.0f),
+            throttle(0.0f), brake(0.0f), clutch(0.0f), dpad_x(0), dpad_y(0),
+            ffb_force(0), ffb_autocenter(0), ffb_enabled(true),
             gadget_output_pending_len(0) {
     ffb_running = false;
     state_dirty = false;
@@ -559,18 +560,18 @@ void GamepadDevice::UpdateSteering(int delta, int sensitivity) {
         return;
     }
 
-    bool notify = false;
+    bool changed = false;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
         const float gain = static_cast<float>(sensitivity) * 70.0f;
-        user_torque += delta * gain;
-        const float max_impulse = 20000.0f;
-        if (user_torque > max_impulse) user_torque = max_impulse;
-        if (user_torque < -max_impulse) user_torque = -max_impulse;
-        notify = true;
+        user_steering += delta * gain;
+        const float max_angle = 32767.0f;
+        if (user_steering > max_angle) user_steering = max_angle;
+        if (user_steering < -max_angle) user_steering = -max_angle;
+        changed = ApplySteeringLocked();
     }
 
-    if (notify) {
+    if (changed) {
         NotifyStateChanged();
     }
 }
@@ -1052,13 +1053,8 @@ void GamepadDevice::ReadGadgetOutput() {
 }
 
 void GamepadDevice::FFBUpdateThread() {
-    // Physics simulation: steering is determined by forces
-    // - FFB force from game (road feedback, tire grip, etc)
-    // - User torque from mouse (human turning the wheel)
-    // - Autocenter spring (wheel wants to return to center)
-    
-    float velocity = 0.0f;  // Current wheel rotation speed
-    float filtered_ffb = 0.0f; // Low-pass filtered FFB torque to keep motion smooth
+    // Keep a subtle baseline force and let big slip spikes stand out
+    float filtered_ffb = 0.0f;
     using clock = std::chrono::steady_clock;
     auto last = clock::now();
     std::unique_lock<std::mutex> lock(state_mutex);
@@ -1067,47 +1063,37 @@ void GamepadDevice::FFBUpdateThread() {
         if (!ffb_running || !running) {
             break;
         }
+
         auto now = clock::now();
         float dt = std::chrono::duration<float>(now - last).count();
         if (dt <= 0.0f) dt = 0.001f;
         if (dt > 0.01f) dt = 0.01f;
         last = now;
 
-        float applied_impulse = user_torque;
-        user_torque = 0.0f;
-        float target_ffb = ShapeFFBTorque(static_cast<float>(ffb_force));
-        const float smoothing_rate = 28.0f; // Keeps constant feel without stepping on mouse input
+        float target_force = ShapeFFBTorque(static_cast<float>(ffb_force));
+        if (ffb_autocenter > 0) {
+            float spring = -(steering * static_cast<float>(ffb_autocenter)) / 32768.0f;
+            target_force += spring;
+        }
+
+        const float smoothing_rate = 28.0f;
         float alpha = 1.0f - std::exp(-dt * smoothing_rate);
         if (alpha < 0.0f) alpha = 0.0f;
         if (alpha > 1.0f) alpha = 1.0f;
-        filtered_ffb += (target_ffb - filtered_ffb) * alpha;
+        filtered_ffb += (target_force - filtered_ffb) * alpha;
 
-        float total_torque = filtered_ffb + applied_impulse;
-        if (ffb_autocenter > 0) {
-            float spring = -(steering * static_cast<float>(ffb_autocenter)) / 32768.0f;
-            total_torque += spring;
-        }
+        const float offset_limit = 14000.0f;
+        float next_offset = filtered_ffb;
+        if (next_offset > offset_limit) next_offset = offset_limit;
+        if (next_offset < -offset_limit) next_offset = -offset_limit;
+        ffb_offset = next_offset;
 
-        const float torque_scale = 28000.0f;
-        velocity += (total_torque / torque_scale);
-        velocity *= 0.95f;
-        if (std::fabs(total_torque) < 25.0f && std::fabs(velocity) < 4.0f) {
-            velocity = 0.0f;
-        }
-        steering += velocity * (dt * 1000.0f);
-
-        if (steering < -32768.0f) {
-            steering = -32768.0f;
-            velocity = 0.0f;
-        }
-        if (steering > 32767.0f) {
-            steering = 32767.0f;
-            velocity = 0.0f;
-        }
-
-        state_dirty.store(true, std::memory_order_release);
+        bool steering_changed = ApplySteeringLocked();
         lock.unlock();
-        state_cv.notify_all();
+        if (steering_changed) {
+            state_dirty.store(true, std::memory_order_release);
+            state_cv.notify_all();
+        }
         lock.lock();
     }
 }
@@ -1211,4 +1197,15 @@ float GamepadDevice::ShapeFFBTorque(float raw_force) const {
     }
 
     return raw_force * gain;
+}
+
+bool GamepadDevice::ApplySteeringLocked() {
+    float combined = user_steering + ffb_offset;
+    if (combined > 32767.0f) combined = 32767.0f;
+    if (combined < -32768.0f) combined = -32768.0f;
+    if (std::fabs(combined - steering) < 0.1f) {
+        return false;
+    }
+    steering = combined;
+    return true;
 }

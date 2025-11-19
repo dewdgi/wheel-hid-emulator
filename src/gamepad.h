@@ -81,6 +81,8 @@ private:
     // State
     bool enabled; // Emulation enabled/disabled, protected by state_mutex
     float steering;
+    float user_steering;
+    float ffb_offset;
     float throttle;
     float brake;
     float clutch;
@@ -92,7 +94,6 @@ private:
     int16_t ffb_force;           // Current FFB force from game (-32768 to 32767)
     int16_t ffb_autocenter;      // Autocenter spring strength
     bool ffb_enabled;
-    float user_torque;           // User impulse from mouse (consumed by FFB thread)
     std::array<uint8_t, 7> gadget_output_pending{}; // Incomplete OUTPUT report bytes
     size_t gadget_output_pending_len = 0;
 
@@ -107,6 +108,7 @@ private:
     void ParseFFBCommand(const uint8_t* data, size_t size);  // Parse FFB OUTPUT reports
     void FFBUpdateThread();  // Thread that continuously applies FFB forces
     float ShapeFFBTorque(float raw_force) const;
+    bool ApplySteeringLocked();
 
     // UInput methods (legacy)
     void EmitEvent(uint16_t type, uint16_t code, int32_t value);
