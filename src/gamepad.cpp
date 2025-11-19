@@ -76,7 +76,9 @@ GamepadDevice::~GamepadDevice() {
 GamepadDevice::GamepadDevice() 
         : fd(-1), use_uhid(false), use_gadget(false), gadget_running(false),
             enabled(false), steering(0), throttle(0.0f), brake(0.0f), clutch(0.0f), dpad_x(0), dpad_y(0),
-            ffb_force(0), ffb_autocenter(0), ffb_enabled(true), user_torque(0.0f) {}
+            ffb_force(0), ffb_autocenter(0), ffb_enabled(true), user_torque(0.0f) {
+    std::cout << "[DEBUG][GamepadDevice::GamepadDevice] Constructor called" << std::endl;
+}
 
 // Clutch axis update (ramp like throttle/brake)
 void GamepadDevice::UpdateClutch(bool pressed) {
@@ -236,12 +238,30 @@ bool GamepadDevice::Create() {
     // Try USB Gadget first (proper USB device with full driver support)
     std::cout << "Attempting to create device using USB Gadget (real USB device)..." << std::endl;
     if (CreateUSBGadget()) {
+        std::cout << "[DEBUG][GamepadDevice::Create] USBGadget created, starting threads" << std::endl;
+        if (!gadget_thread.joinable()) {
+            gadget_thread = std::thread(&GamepadDevice::USBGadgetPollingThread, this);
+            std::cout << "[DEBUG][GamepadDevice::Create] gadget_thread started, id=" << gadget_thread.get_id() << std::endl;
+        }
+        if (!ffb_thread.joinable()) {
+            ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
+            std::cout << "[DEBUG][GamepadDevice::Create] ffb_thread started, id=" << ffb_thread.get_id() << std::endl;
+        }
         return true;
     }
     
     // Try UHID second (provides HIDRAW support)
     std::cout << "USB Gadget not available, trying UHID..." << std::endl;
     if (CreateUHID()) {
+        std::cout << "[DEBUG][GamepadDevice::Create] UHID created, starting threads" << std::endl;
+        if (!gadget_thread.joinable()) {
+            gadget_thread = std::thread(&GamepadDevice::USBGadgetPollingThread, this);
+            std::cout << "[DEBUG][GamepadDevice::Create] gadget_thread started, id=" << gadget_thread.get_id() << std::endl;
+        }
+        if (!ffb_thread.joinable()) {
+            ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
+            std::cout << "[DEBUG][GamepadDevice::Create] ffb_thread started, id=" << ffb_thread.get_id() << std::endl;
+        }
         return true;
     }
     
@@ -1006,6 +1026,7 @@ void GamepadDevice::FFBUpdateThread() {
     // - Autocenter spring (wheel wants to return to center)
     
     std::cout << "[DEBUG][FFBUpdateThread] ENTERED" << std::endl;
+    std::cout << "[DEBUG][FFBUpdateThread] thread id: " << std::this_thread::get_id() << std::endl;
     std::cout << "[DEBUG][FFBUpdateThread] ffb_running=" << ffb_running << ", running=" << running << std::endl;
     std::cout << "[DEBUG] FFB update thread started" << std::endl;
     
@@ -1017,7 +1038,7 @@ void GamepadDevice::FFBUpdateThread() {
         if (!ffb_running) std::cout << "[DEBUG][FFBUpdateThread] ffb_running is false, breaking" << std::endl;
         if (!running) std::cout << "[DEBUG][FFBUpdateThread] running is false, breaking" << std::endl;
         std::cout << "[DEBUG][FFBUpdateThread] before lock_guard, thread=" << std::this_thread::get_id() << std::endl;
-        {
+        try {
             std::lock_guard<std::mutex> lock(state_mutex);
             std::cout << "[DEBUG][FFBUpdateThread] after lock_guard, thread=" << std::this_thread::get_id() << std::endl;
             std::cout << "[DEBUG][FFBUpdateThread] running after lock_guard = " << running << std::endl;
@@ -1047,6 +1068,9 @@ void GamepadDevice::FFBUpdateThread() {
                 steering = 32767.0f;
                 velocity = 0.0f;
             }
+        } catch (const std::exception& e) {
+            std::cout << "[DEBUG][FFBUpdateThread] EXCEPTION acquiring lock_guard: " << e.what() << std::endl;
+            break;
         }
         std::cout << "[DEBUG][FFBUpdateThread] after unlock_guard, thread=" << std::this_thread::get_id() << std::endl;
         // Sleep in small increments to allow fast shutdown
@@ -1065,7 +1089,7 @@ void GamepadDevice::FFBUpdateThread() {
         }
         ++ffb_loop_counter;
     }
-    std::cout << "[DEBUG][FFBUpdateThread] FFB update thread stopped, running=" << running << std::endl;
+    std::cout << "[DEBUG][FFBUpdateThread] FFB update thread stopped, running=" << running << ", ffb_running=" << ffb_running << std::endl;
     std::cout << "[DEBUG][FFBUpdateThread] EXITED" << std::endl;
 }
 
