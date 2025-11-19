@@ -75,10 +75,13 @@ int main(int, char*[]) {
 
     while (running) {
         // ...existing code...
+        std::cout << "[DEBUG][main] Loop running, running=" << running << std::endl;
     }
     std::cout << "[DEBUG][main] Main loop exited, running=" << running << std::endl;
     // Signal threads to exit before destruction
+    std::cout << "[DEBUG][main] Calling gamepad.ShutdownThreads()" << std::endl;
     gamepad.ShutdownThreads();
+    std::cout << "[DEBUG][main] Called input.Grab(false)" << std::endl;
     input.Grab(false);
     std::cout << "[DEBUG][main] Goodbye!" << std::endl;
     return 0;
