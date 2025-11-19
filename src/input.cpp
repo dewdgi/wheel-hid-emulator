@@ -43,6 +43,12 @@ bool Input::DiscoverKeyboard(const std::string& device_path) {
         if (kbd_fd >= 0) {
             int flags = fcntl(kbd_fd, F_GETFL);
             std::cout << "[DEBUG][DiscoverKeyboard] kbd_fd F_GETFL flags=" << flags << std::endl;
+            char name[256] = {0};
+            if (ioctl(kbd_fd, EVIOCGNAME(sizeof(name)), name) >= 0) {
+                std::cout << "[DEBUG][DiscoverKeyboard] kbd_fd EVIOCGNAME: '" << name << "'" << std::endl;
+            }
+            int grab_result = ioctl(kbd_fd, EVIOCGRAB, 0);
+            std::cout << "[DEBUG][DiscoverKeyboard] kbd_fd EVIOCGRAB(0) result=" << grab_result << ", errno=" << errno << std::endl;
         }
         if (kbd_fd < 0) {
             std::cerr << "Failed to open keyboard device: " << device_path << ", errno=" << errno << std::endl;
@@ -141,6 +147,12 @@ bool Input::DiscoverMouse(const std::string& device_path) {
         if (mouse_fd >= 0) {
             int flags = fcntl(mouse_fd, F_GETFL);
             std::cout << "[DEBUG][DiscoverMouse] mouse_fd F_GETFL flags=" << flags << std::endl;
+            char name[256] = {0};
+            if (ioctl(mouse_fd, EVIOCGNAME(sizeof(name)), name) >= 0) {
+                std::cout << "[DEBUG][DiscoverMouse] mouse_fd EVIOCGNAME: '" << name << "'" << std::endl;
+            }
+            int grab_result = ioctl(mouse_fd, EVIOCGRAB, 0);
+            std::cout << "[DEBUG][DiscoverMouse] mouse_fd EVIOCGRAB(0) result=" << grab_result << ", errno=" << errno << std::endl;
         }
         if (mouse_fd < 0) {
             std::cerr << "Failed to open mouse device: " << device_path << ", errno=" << errno << std::endl;
@@ -278,6 +290,9 @@ void Input::Read(int& mouse_dx) {
     }
     int timeout = 10; // ms
     std::cout << "[DEBUG][Input::Read] Before poll, nfds=" << nfds << ", running=" << running << std::endl;
+    for (int i = 0; i < nfds; ++i) {
+        std::cout << "[DEBUG][Input::Read] pollfd[" << i << "].fd=" << pfds[i].fd << ", events=" << pfds[i].events << std::endl;
+    }
     int ret = (nfds > 0) ? poll(pfds, nfds, timeout) : 0;
     std::cout << "[DEBUG][Input::Read] After poll, ret=" << ret << ", errno=" << errno << ", running=" << running << std::endl;
     for (int i = 0; i < nfds; ++i) {
