@@ -20,6 +20,9 @@ class Input; // Forward declaration
 
 
 class GamepadDevice {
+public:
+    // Notifies all condition variables for shutdown
+    void NotifyAllShutdownCVs();
 
 public:
     GamepadDevice();

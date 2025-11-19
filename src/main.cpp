@@ -1,4 +1,6 @@
-// Forward declaration
+#include "input.h"
+#include "gamepad.h"
+
 void notify_all_shutdown(Input& input, GamepadDevice& gamepad);
 
 #include <iostream>
@@ -115,9 +117,5 @@ int main(int, char*[]) {
 void notify_all_shutdown(Input& input, GamepadDevice& gamepad) {
     // Wake all threads waiting on condition variables
     input.input_cv.notify_all();
-    {
-        std::lock_guard<std::mutex> lock(gamepad.state_mutex);
-        gamepad.state_cv.notify_all();
-        gamepad.ffb_cv.notify_all();
-    }
+    gamepad.NotifyAllShutdownCVs();
 }

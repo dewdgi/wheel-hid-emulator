@@ -1,4 +1,9 @@
 #include "gamepad.h"
+void GamepadDevice::NotifyAllShutdownCVs() {
+    // Wake all threads waiting on condition variables
+    state_cv.notify_all();
+    ffb_cv.notify_all();
+}
 #include "input.h"
 #include <fcntl.h>
 #include <unistd.h>
