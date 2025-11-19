@@ -896,7 +896,7 @@ void GamepadDevice::USBGadgetPollingThread() {
     // - Write INPUT reports (joystick state) when host polls
     // - Read OUTPUT reports (FFB commands) when host sends them
     
-    std::cout << "USB Gadget polling thread started" << std::endl;
+    std::cout << "[DEBUG] USB Gadget polling thread started" << std::endl;
     
     // Use non-blocking I/O with poll() for bidirectional communication
     int flags = fcntl(fd, F_GETFL, 0);
@@ -960,7 +960,7 @@ void GamepadDevice::USBGadgetPollingThread() {
         }
     }
     
-    std::cout << "USB Gadget polling thread stopped" << std::endl;
+    std::cout << "[DEBUG] USB Gadget polling thread stopped" << std::endl;
 }
 
 void GamepadDevice::FFBUpdateThread() {
@@ -969,7 +969,7 @@ void GamepadDevice::FFBUpdateThread() {
     // - User torque from mouse (human turning the wheel)
     // - Autocenter spring (wheel wants to return to center)
     
-    std::cout << "FFB update thread started" << std::endl;
+    std::cout << "[DEBUG] FFB update thread started" << std::endl;
     
     float velocity = 0.0f;  // Current wheel rotation speed
     
@@ -1016,7 +1016,7 @@ void GamepadDevice::FFBUpdateThread() {
         usleep(8000);
     }
     
-    std::cout << "FFB update thread stopped" << std::endl;
+    std::cout << "[DEBUG] FFB update thread stopped" << std::endl;
 }
 
 void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {

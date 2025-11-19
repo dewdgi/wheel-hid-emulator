@@ -1,4 +1,5 @@
 #include <iostream>
+#include <atomic>
 #include <csignal>
 #include <unistd.h>
 #include <cstring>
@@ -13,7 +14,7 @@
 #include "gamepad.h"
 
 // Global flag for clean shutdown
-volatile bool running = true;
+std::atomic<bool> running{true};
 
 void signal_handler(int signal) {
     if (signal == SIGINT) {
@@ -305,7 +306,12 @@ int main(int argc, char* argv[]) {
             gamepad.SendState();
         }
         gamepad.ProcessUHIDEvents();
-        usleep(8000);
+        usleep(10000); // Sleep 10ms to avoid busy-waiting
+        std::cout << "[DEBUG] main loop slept 10ms, running=" << running << std::endl;
+        if (!running) {
+            std::cout << "[DEBUG] running is false after sleep, breaking main loop" << std::endl;
+            break;
+        }
     }
     std::cout << "[DEBUG] Main loop exited, running=" << running << std::endl;
     input.Grab(false);
