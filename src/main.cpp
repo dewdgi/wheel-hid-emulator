@@ -63,6 +63,7 @@ int main(int, char*[]) {
         std::cerr << "Failed to create virtual gamepad" << std::endl;
         return 1;
     }
+    std::cout << "[DEBUG][main] After gamepad.Create(), ffb_thread joinable=" << gamepad.IsFFBThreadJoinable() << std::endl;
 
     // Discover input devices
     Input input;

@@ -244,8 +244,9 @@ bool GamepadDevice::Create() {
             std::cout << "[DEBUG][GamepadDevice::Create] gadget_thread started, id=" << gadget_thread.get_id() << std::endl;
         }
         if (!ffb_thread.joinable()) {
+            std::cout << "[DEBUG][GamepadDevice::Create] About to start ffb_thread" << std::endl;
             ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
-            std::cout << "[DEBUG][GamepadDevice::Create] ffb_thread started, id=" << ffb_thread.get_id() << std::endl;
+            std::cout << "[DEBUG][GamepadDevice::Create] ffb_thread started, id=" << ffb_thread.get_id() << ", joinable=" << ffb_thread.joinable() << std::endl;
         }
         return true;
     }
@@ -258,11 +259,12 @@ bool GamepadDevice::Create() {
             gadget_thread = std::thread(&GamepadDevice::USBGadgetPollingThread, this);
             std::cout << "[DEBUG][GamepadDevice::Create] gadget_thread started, id=" << gadget_thread.get_id() << std::endl;
         }
-        if (!ffb_thread.joinable()) {
-            ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
-            std::cout << "[DEBUG][GamepadDevice::Create] ffb_thread started, id=" << ffb_thread.get_id() << std::endl;
+        std::cout << "[DEBUG][~GamepadDevice] ffb_thread joinable=" << ffb_thread.joinable() << std::endl;
+        if (ffb_thread.joinable()) {
+            std::cout << "[DEBUG][~GamepadDevice] Joining ffb_thread" << std::endl;
+            ffb_thread.join();
+            std::cout << "[DEBUG][~GamepadDevice] ffb_thread joined" << std::endl;
         }
-        return true;
     }
     
     // Fall back to uinput if both fail

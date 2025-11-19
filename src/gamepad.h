@@ -1,5 +1,4 @@
-    // Signal threads to exit
-    void ShutdownThreads();
+
 
 #ifndef GAMEPAD_H
 #define GAMEPAD_H
@@ -29,6 +28,8 @@ public:
     GamepadDevice& operator=(const GamepadDevice& /*other*/) { std::cout << "[DEBUG][GamepadDevice] COPY ASSIGNMENT CALLED" << std::endl; return *this; }
     GamepadDevice(GamepadDevice&& /*other*/) noexcept { std::cout << "[DEBUG][GamepadDevice] MOVE CONSTRUCTOR CALLED" << std::endl; }
     GamepadDevice& operator=(GamepadDevice&& /*other*/) noexcept { std::cout << "[DEBUG][GamepadDevice] MOVE ASSIGNMENT CALLED" << std::endl; return *this; }
+
+    bool IsFFBThreadJoinable() const { return ffb_thread.joinable(); }
 private:
         public:
             // Signal threads to exit
