@@ -25,9 +25,9 @@
           - `gamepad.UpdateThrottle(input.IsKeyPressed(KEY_W))`
           - `gamepad.UpdateBrake(input.IsKeyPressed(KEY_S))`
           - `gamepad.UpdateClutch(input.IsKeyPressed(KEY_A))`
-          - `gamepad.UpdateButtons(input)`
+          - `gamepad.UpdateButtons(input)` (writes into a compact `std::array<uint8_t, 26>`)
           - `gamepad.UpdateDPad(input)`
-          - `gamepad.SendState()`
+          - `gamepad.SendState()` (queues HID state for UHID/uinput, or just marks dirty for USB gadget)
         - `gamepad.ProcessUHIDEvents()`
     - On exit: `input.Grab(false)`
 
@@ -39,11 +39,12 @@
     - `gadget_thread`, `gadget_running` (USB Gadget polling thread)
     - `ffb_thread`, `ffb_running` (FFB physics thread)
     - `state_mutex` (protects all state)
-    - `enabled`, `steering`, `throttle`, `brake`, `clutch`, `buttons`, `dpad_x`, `dpad_y`, `ffb_force`, `ffb_autocenter`, `ffb_enabled`, `user_torque`
+    - `enabled`, `steering`, `throttle`, `brake`, `clutch`, `button_states` (26 packed bits), `dpad_x`, `dpad_y`, `state_dirty`
+    - `user_steering`, `ffb_force`, `ffb_autocenter`, `ffb_offset`, `ffb_velocity`, `ffb_gain`
   - **Methods:**
     - `Create()` (USB Gadget only at runtime) with helper routines `CreateUSBGadget()`, `CreateUHID()`, `CreateUInput()` retained for historical reference
     - `UpdateSteering(int, int)`, `UpdateThrottle(bool)`, `UpdateBrake(bool)`, `UpdateClutch(bool)`, `UpdateButtons(const Input&)`, `UpdateDPad(const Input&)`
-    - `SendState()`, `SendUHIDReport()`, `BuildHIDReport()`, `SendNeutral()` (sends neutral HID snapshot on creation and every toggle)
+    - `SendState()`, `SendUHIDReport()`, `BuildHIDReport()`, `SendNeutral()` (now stores state in arrays, keeps gadget writes single-threaded, and sends neutral snapshots without data races)
     - `ProcessUHIDEvents()` — handles FFB and state requests
     - `ParseFFBCommand(const uint8_t*, size_t)` — parses FFB commands
     - `FFBUpdateThread()` — physics simulation, runs while `ffb_running && running`
@@ -77,10 +78,10 @@
     - `Load()`, `LoadFromFile(const char*)`, `SaveDefault(const char*)`, `ParseINI(const std::string&)`
 
 ### Threading Model
-- **Main thread:** runs main loop, handles input, state update, and report sending
-- **FFB Physics thread:** runs `FFBUpdateThread()` in `GamepadDevice` (125Hz)
-- **USB Gadget polling thread:** runs `USBGadgetPollingThread()` if in USB Gadget mode
-- **Mutex:** `state_mutex` in `GamepadDevice` protects all shared state
+- **Main thread:** runs main loop, handles input, state update, and report sending (direct writes only occur for UHID/uinput; gadget mode simply flags `state_dirty`)
+- **FFB Physics thread:** runs `FFBUpdateThread()` (125 Hz) using snapshot copies so heavy math happens outside the mutex, then commits the result in one lock+apply step
+- **USB Gadget polling thread:** runs `USBGadgetPollingThread()` when gadget mode is active; it is now the sole writer to `/dev/hidg0`, retrying writes until the host consumes the report
+- **Mutex:** `state_mutex` gates all shared state transitions and ensures button arrays, axes, and FFB parameters stay coherent across threads
 
 ### Device Grabbing and Shutdown
 - `input.Grab(bool)` is called on enable/disable and at shutdown
@@ -206,10 +207,10 @@ wheel-hid-emulator/
 
 ## Threading and Synchronization
 
-- **Main Thread:** Runs main loop, handles input, state update, and report sending
-- **FFB Physics Thread:** Runs `FFBUpdateThread()` in `GamepadDevice` (125Hz)
-- **USB Gadget Polling Thread:** Runs `USBGadgetPollingThread()` if in USB Gadget mode
-- **Mutex:** `state_mutex` in `GamepadDevice` protects all shared state (steering, pedals, buttons, enabled, etc.)
+- **Main Thread:** Runs main loop, handles input and state updates, and queues HID packets (direct emit only for UHID/uinput)
+- **FFB Physics Thread:** Runs `FFBUpdateThread()` (125 Hz) using snapshot/commit semantics to minimize lock time
+- **USB Gadget Polling Thread:** Runs `USBGadgetPollingThread()` when gadget mode is active; it is the only thread that touches `/dev/hidg0`
+- **Mutex:** `state_mutex` in `GamepadDevice` protects all shared state (steering, pedals, compact button bitset, enabled flag, etc.)
 
 ---
 
@@ -412,7 +413,7 @@ Current (FFB physics improvements + race condition fix **applied**)
 │  │ 1. Read Keyboard/Mouse Input (evdev)                   │ │
 │  │ 2. Check Ctrl+M Toggle (Enable/Disable)                │ │
 │  │ 3. Update Gamepad State (buttons, pedals, dpad)        │ │
-│  │ 4. Update Mouse Input → user_torque                    │ │
+│  │ 4. Update Mouse Input → user_steering                  │ │
 │  │ 5. Send HID Report (steering, pedals, buttons)         │ │
 │  │ 6. Process UHID Events (FFB commands from game)        │ │
 │  └────────────────────────────────────────────────────────┘ │
@@ -583,41 +584,42 @@ ApplySteeringLocked(user_steering + ffb_offset)
 
 #### Steering (Mouse X Axis)
 ```cpp
-// Mouse delta → User torque
-if (abs(delta) >= 2) {  // 2-pixel deadzone for jitter
-    user_torque = delta * sensitivity * 20.0f
+if (delta != 0) {
+  constexpr float base_gain = 0.05f;
+  constexpr float max_step = 2000.0f;
+  float step = std::clamp(delta * sensitivity * base_gain,
+              -max_step,
+              max_step);
+  user_steering = std::clamp(user_steering + step,
+                 -32767.0f,
+                 32767.0f);
+  ApplySteeringLocked();
 }
 ```
 
 **Characteristics:**
-- **Linear scaling:** Proportional to sensitivity setting
-- **Deadzone:** ±2 pixels filters sensor jitter
-- **Force-based:** Adds to physics simulation, not direct position
-- **Balanced:** Scaled to match FFB force magnitude (20x vs old 200x)
+- **Linear scaling:** Mouse deltas are multiplied by `sensitivity * 0.05` for predictable feel
+- **Clamped step:** Each frame is limited to ±2000 counts so extremely fast mouse motion cannot spike past the range
+- **Force-style control:** Steering accumulates into `user_steering`, which then blends with FFB offset rather than overwriting it
+- **Full-range guard:** Result is clamped to the physical ±32767 span before generating the HID axis
 
 **Example:**
-- Sensitivity = 50, Mouse = 10 pixels
-- `user_torque = 10 * 50 * 20 = 10,000`
-- Comparable to max FFB force (32,767)
+- Sensitivity 50, delta 10 → `step = 10 * 50 * 0.05 = 25`; repeated movement keeps adding 25-count quanta until ±32767 is reached
 
 #### Pedals (W/S Keys)
 ```cpp
-// Ramping (3% per frame at 125Hz)
-throttle += (W_pressed ? 3.0f : -3.0f)
-brake += (S_pressed ? 3.0f : -3.0f)
-throttle = clamp(throttle, 0.0f, 100.0f)
-brake = clamp(brake, 0.0f, 100.0f)
+// Instant on/off (matching digital keyboard input)
+throttle = W_pressed ? 100.0f : 0.0f;
+brake    = S_pressed ? 100.0f : 0.0f;
 
-// Convert to inverted G29 range
-throttle_axis = 65535 - (throttle * 655.35f)
-brake_axis = 65535 - (brake * 655.35f)
+int16_t throttle_axis = 32767 - static_cast<int16_t>(throttle * 655.35f);
+int16_t brake_axis    = 32767 - static_cast<int16_t>(brake * 655.35f);
 ```
 
 **Characteristics:**
-- **Hold-to-accelerate:** Pressing W gradually increases throttle
-- **Auto-release:** Releasing key gradually decreases
-- **Independent:** Can press both simultaneously
-- **Inverted output:** Matches real G29 hardware
+- **Binary pedals:** Keyboard keys jump directly between rest and fully pressed (games can still smooth in software)
+- **Independent:** Keys are tracked separately, so both can be pressed at once
+- **Inverted output:** Values match real G29 hardware and stay in the `[-32768, 32767]` space before conversion
 
 #### Buttons (Keyboard Keys)
 25 buttons mapped to keys Q, E, F, G, H, R, T, Y, U, I, O, P, 1-9, 0, LShift, Space, Tab
@@ -661,7 +663,7 @@ while (running) {
         gamepad.UpdateClutch(A_pressed)
         gamepad.UpdateButtons(input)
         gamepad.UpdateDPad(input)
-        gamepad.SendState()  // Send HID report
+        gamepad.SendState()  // Push UHID/uinput report or flag gadget thread for next poll
     }
     
     // 5. Process FFB events
@@ -688,21 +690,20 @@ while (running) {
 ### Thread 1: Main Loop (125 Hz)
 - Reads keyboard/mouse input
 - Updates button/pedal state
-- Sends HID reports
+- Calls `SendState()` which either pushes UHID/uinput events immediately or just marks `state_dirty` for the gadget writer
 - Processes incoming FFB commands
-- **Mutex:** Locks `state_mutex` when updating `user_torque`
+- **Mutex:** Acquired briefly around each state update so input never stalls on long critical sections
 
 ### Thread 2: FFB Physics (125 Hz)
 - Runs physics simulation
-- Calculates steering position from forces
-- **Mutex:** Locks `state_mutex` when updating `steering`, `velocity`
+- Copies the small set of shared parameters, releases the mutex, performs the math, then locks once more to commit the new offset/velocity and apply steering
 
 ### Thread 3: USB Gadget Polling (Event-Driven)
 - Only active in USB Gadget mode
 - Waits for host polls using `poll()`
-- Sends INPUT reports when host requests
-- Receives OUTPUT reports (FFB commands) from host
-- **Mutex:** Locks `state_mutex` when reading state for HID report
+- Becomes the sole writer to `/dev/hidg0`, retrying with short blocking waits so no HID frame is ever dropped due to `EAGAIN`
+- Receives OUTPUT reports (FFB commands) from the host and forwards them to `ParseFFBCommand()`
+- **Mutex:** Locks only long enough to grab a snapshot right before serializing the HID report
 
 **Synchronization:**
 - All shared state protected by `state_mutex`
@@ -715,7 +716,7 @@ while (running) {
 
 ### Mutex Discipline
 
-`state_mutex` is the single writer/read lock for every shared signal (`steering`, `velocity`, `user_torque`, pedal ramps, button bitfields, and the `enabled` latch that drives grabbing). Any thread that touches those fields must hold the mutex, which guarantees the HID report is assembled from a single coherent snapshot and that the toggle edge cannot be torn by a concurrent physics update.
+`state_mutex` is the single writer/read lock for every shared signal (`steering`, `velocity`, `user_steering`, pedal state, button bitfields, and the `enabled` latch that drives grabbing). Any thread that touches those fields must hold the mutex, which guarantees the HID report is assembled from a single coherent snapshot and that the toggle edge cannot be torn by a concurrent physics update.
 
 **As of Nov 2025:**
 - The `ToggleEnabled` method in `GamepadDevice` now toggles the `enabled` state under the mutex, but calls `input.Grab()` outside the lock. This prevents deadlocks if `input.Grab()` blocks or takes time, ensuring the main loop remains responsive to Ctrl+M and Ctrl+C.
@@ -724,37 +725,48 @@ while (running) {
 
 ```cpp
 void GamepadDevice::SendState() {
+  if (use_gadget) {
+    state_dirty.store(true, std::memory_order_release);
+    state_cv.notify_all();
+    return;
+  }
   if (use_uhid) {
     SendUHIDReport();
     return;
   }
 
   std::lock_guard<std::mutex> lock(state_mutex);
+  uint32_t buttons = BuildButtonBitsLocked();
   EmitEvent(EV_ABS, ABS_X, static_cast<int16_t>(steering));
   EmitEvent(EV_ABS, ABS_Z, brake_axis);
   EmitEvent(EV_ABS, ABS_RZ, throttle_axis);
-  EmitButtons(button_mask);
+  EmitButtons(buttons);
 }
 
 void GamepadDevice::SendUHIDReport() {
-  auto payload = BuildHIDReport();  // BuildHIDReport() also locks state_mutex internally
-  WriteUHID(payload);
+  auto report = BuildHIDReport();
+  if (use_gadget) {
+    WriteHIDBlocking(report.data(), report.size());
+  } else {
+    // Wrap in UHID_INPUT2 event
+  }
 }
 
-std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
+std::array<uint8_t, 13> GamepadDevice::BuildHIDReport() {
   std::lock_guard<std::mutex> lock(state_mutex);
-  return PackReport(steering, brake_axis, throttle_axis, hat_value, button_mask);
+  auto report = PackReport(steering, brake_axis, throttle_axis, hat_value, BuildButtonBitsLocked());
+  return report;
 }
 ```
 
-The live USB Gadget writer (internally still using the UHID report builder) holds the mutex while capturing state, and even the dormant uinput fallback shares the same snapshot rule, so every HID report is emitted from a coherent state.
+Gadget transfers are now serialized through the polling thread, which loops on `poll(POLLOUT)` and `write()` until every byte lands, eliminating the dropped-frame window that previously appeared whenever `/dev/hidg0` returned `EAGAIN`.
 
 ### Deterministic Toggle / Ungrab Flow
 
 1. `CheckToggle()` detects Ctrl+M press **and** release while holding `state_mutex`, flips `enabled`, and returns the new value.
 2. The main loop immediately calls `input.Grab(enabled)` while still under the same loop iteration, so `enabled == false` guarantees `EVIOCGRAB` is released before the next batch of events is read.
 3. When transitioning to disabled, `Input::ResetState()` zeroes the aggregated key counters so missed key-up events (while ungrabbed) never leave throttles/buttons latched. Immediately after, `SendNeutral()` pushes a centered HID snapshot so the host always samples G29-resting values before we hand input back and forth, preventing “stuck trigger” heuristics in games. Enabling also emits a neutral frame so the host restarts from a sane baseline.
-4. Because `SendState()` can no longer race against `FFBUpdateThread()`, the HID report writer never clobbers the `enabled` latch mid-frame, so Ctrl+M release consistently ungrabs both the keyboard and mouse.
+4. Because gadget writes are funneled through a single thread and UHID/uinput snapshots grab the mutex only while copying 26 button bits plus four axes, `SendState()` is no longer fighting with `FFBUpdateThread()`, and the toggle/ungrab flow stays deterministic.
 
 This structural contract removes the data race entirely and couples the grab/ungrab sequence to an atomic state transition, preventing the stuck-grab failure mode observed previously.
 

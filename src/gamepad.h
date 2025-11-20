@@ -8,9 +8,7 @@
 extern std::atomic<bool> running;
 
 #include <cstdint>
-#include <map>
 #include <string>
-#include <vector>
 #include <thread>
 #include <mutex>
 #include <atomic>
@@ -18,6 +16,36 @@ extern std::atomic<bool> running;
 
 class Input; // Forward declaration
 
+
+enum class WheelButton : uint8_t {
+    South = 0,
+    East,
+    West,
+    North,
+    TL,
+    TR,
+    TL2,
+    TR2,
+    Select,
+    Start,
+    ThumbL,
+    ThumbR,
+    Mode,
+    Dead,
+    TriggerHappy1,
+    TriggerHappy2,
+    TriggerHappy3,
+    TriggerHappy4,
+    TriggerHappy5,
+    TriggerHappy6,
+    TriggerHappy7,
+    TriggerHappy8,
+    TriggerHappy9,
+    TriggerHappy10,
+    TriggerHappy11,
+    TriggerHappy12,
+    Count
+};
 
 class GamepadDevice {
 public:
@@ -91,7 +119,7 @@ private:
     float throttle;
     float brake;
     float clutch;
-    std::map<std::string, bool> buttons;
+    std::array<uint8_t, static_cast<size_t>(WheelButton::Count)> button_states;
     int8_t dpad_x;
     int8_t dpad_y;
 
@@ -108,7 +136,7 @@ private:
     bool CreateUInput();
     void DestroyUSBGadget();
     void SendUHIDReport();
-    std::vector<uint8_t> BuildHIDReport();
+    std::array<uint8_t, 13> BuildHIDReport();
     void USBGadgetPollingThread();  // Thread that responds to host polls
     void ReadGadgetOutput();        // Gather host OUTPUT data (FFB) in gadget mode
     void ParseFFBCommand(const uint8_t* data, size_t size);  // Parse FFB OUTPUT reports
@@ -119,6 +147,9 @@ private:
     // UInput methods (fallback path)
     void EmitEvent(uint16_t type, uint16_t code, int32_t value);
     int16_t ClampSteering(int16_t value);
+    void SetButton(WheelButton button, bool pressed);
+    uint32_t BuildButtonBitsLocked() const;
+    bool WriteHIDBlocking(const uint8_t* data, size_t size);
 };
 
 #endif // GAMEPAD_H

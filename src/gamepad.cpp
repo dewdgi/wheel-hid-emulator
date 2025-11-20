@@ -14,11 +14,47 @@ void GamepadDevice::NotifyAllShutdownCVs() {
 #include <cstdlib>
 #include <chrono>
 #include <cmath>
+#include <algorithm>
 #include <cerrno>
 #include <linux/uhid.h>
 #include <linux/uinput.h>
 #include <linux/input-event-codes.h>
 #include <thread>
+
+namespace {
+
+constexpr std::array<uint16_t, static_cast<size_t>(WheelButton::Count)> kButtonCodes = {
+    BTN_SOUTH,
+    BTN_EAST,
+    BTN_WEST,
+    BTN_NORTH,
+    BTN_TL,
+    BTN_TR,
+    BTN_TL2,
+    BTN_TR2,
+    BTN_SELECT,
+    BTN_START,
+    BTN_THUMBL,
+    BTN_THUMBR,
+    BTN_MODE,
+    BTN_DEAD,
+    BTN_TRIGGER_HAPPY1,
+    BTN_TRIGGER_HAPPY2,
+    BTN_TRIGGER_HAPPY3,
+    BTN_TRIGGER_HAPPY4,
+    BTN_TRIGGER_HAPPY5,
+    BTN_TRIGGER_HAPPY6,
+    BTN_TRIGGER_HAPPY7,
+    BTN_TRIGGER_HAPPY8,
+    BTN_TRIGGER_HAPPY9,
+    BTN_TRIGGER_HAPPY10,
+    BTN_TRIGGER_HAPPY11,
+    BTN_TRIGGER_HAPPY12
+};
+
+static_assert(kButtonCodes.size() == static_cast<size_t>(WheelButton::Count), "Button code table mismatch");
+
+}
 
 void GamepadDevice::ShutdownThreads() {
     ffb_running = false;
@@ -79,6 +115,7 @@ GamepadDevice::GamepadDevice()
             gadget_output_pending_len(0) {
     ffb_running = false;
     state_dirty = false;
+    button_states.fill(0);
 }
 
 // Query enabled state (mutex-protected)
@@ -105,7 +142,6 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
         input.ResetState();
     }
     SendNeutral();
-        NotifyStateChanged();
     std::cout << (enable ? "Emulation ENABLED" : "Emulation DISABLED") << std::endl;
 }
 
@@ -647,32 +683,32 @@ void GamepadDevice::UpdateClutch(bool pressed, float /*dt*/) {
 void GamepadDevice::UpdateButtons(const Input& input) {
     {
         std::lock_guard<std::mutex> lock(state_mutex);
-        buttons["BTN_SOUTH"] = input.IsKeyPressed(KEY_Q);      // Cross
-        buttons["BTN_EAST"] = input.IsKeyPressed(KEY_E);       // Circle
-        buttons["BTN_WEST"] = input.IsKeyPressed(KEY_F);       // Square
-        buttons["BTN_NORTH"] = input.IsKeyPressed(KEY_G);      // Triangle
-        buttons["BTN_TL"] = input.IsKeyPressed(KEY_H);         // L1
-        buttons["BTN_TR"] = input.IsKeyPressed(KEY_R);         // R1
-        buttons["BTN_TL2"] = input.IsKeyPressed(KEY_T);        // L2
-        buttons["BTN_TR2"] = input.IsKeyPressed(KEY_Y);        // R2
-        buttons["BTN_SELECT"] = input.IsKeyPressed(KEY_U);     // Share
-        buttons["BTN_START"] = input.IsKeyPressed(KEY_I);      // Options
-        buttons["BTN_THUMBL"] = input.IsKeyPressed(KEY_O);     // L3
-        buttons["BTN_THUMBR"] = input.IsKeyPressed(KEY_P);     // R3
-        buttons["BTN_MODE"] = input.IsKeyPressed(KEY_1);       // PS
-        buttons["BTN_DEAD"] = input.IsKeyPressed(KEY_2);       // Dead
-        buttons["BTN_TRIGGER_HAPPY1"] = input.IsKeyPressed(KEY_3);   // D-pad Up
-        buttons["BTN_TRIGGER_HAPPY2"] = input.IsKeyPressed(KEY_4);   // D-pad Down
-        buttons["BTN_TRIGGER_HAPPY3"] = input.IsKeyPressed(KEY_5);   // D-pad Left
-        buttons["BTN_TRIGGER_HAPPY4"] = input.IsKeyPressed(KEY_6);   // D-pad Right
-        buttons["BTN_TRIGGER_HAPPY5"] = input.IsKeyPressed(KEY_7);   // Red 1
-        buttons["BTN_TRIGGER_HAPPY6"] = input.IsKeyPressed(KEY_8);   // Red 2
-        buttons["BTN_TRIGGER_HAPPY7"] = input.IsKeyPressed(KEY_9);   // Red 3
-        buttons["BTN_TRIGGER_HAPPY8"] = input.IsKeyPressed(KEY_0);   // Red 4
-        buttons["BTN_TRIGGER_HAPPY9"] = input.IsKeyPressed(KEY_LEFTSHIFT); // Red 5
-        buttons["BTN_TRIGGER_HAPPY10"] = input.IsKeyPressed(KEY_SPACE);    // Red 6
-        buttons["BTN_TRIGGER_HAPPY11"] = input.IsKeyPressed(KEY_TAB);      // Rotary Left
-        buttons["BTN_TRIGGER_HAPPY12"] = input.IsKeyPressed(KEY_ENTER);    // Rotary Right
+        SetButton(WheelButton::South, input.IsKeyPressed(KEY_Q));
+        SetButton(WheelButton::East, input.IsKeyPressed(KEY_E));
+        SetButton(WheelButton::West, input.IsKeyPressed(KEY_F));
+        SetButton(WheelButton::North, input.IsKeyPressed(KEY_G));
+        SetButton(WheelButton::TL, input.IsKeyPressed(KEY_H));
+        SetButton(WheelButton::TR, input.IsKeyPressed(KEY_R));
+        SetButton(WheelButton::TL2, input.IsKeyPressed(KEY_T));
+        SetButton(WheelButton::TR2, input.IsKeyPressed(KEY_Y));
+        SetButton(WheelButton::Select, input.IsKeyPressed(KEY_U));
+        SetButton(WheelButton::Start, input.IsKeyPressed(KEY_I));
+        SetButton(WheelButton::ThumbL, input.IsKeyPressed(KEY_O));
+        SetButton(WheelButton::ThumbR, input.IsKeyPressed(KEY_P));
+        SetButton(WheelButton::Mode, input.IsKeyPressed(KEY_1));
+        SetButton(WheelButton::Dead, input.IsKeyPressed(KEY_2));
+        SetButton(WheelButton::TriggerHappy1, input.IsKeyPressed(KEY_3));
+        SetButton(WheelButton::TriggerHappy2, input.IsKeyPressed(KEY_4));
+        SetButton(WheelButton::TriggerHappy3, input.IsKeyPressed(KEY_5));
+        SetButton(WheelButton::TriggerHappy4, input.IsKeyPressed(KEY_6));
+        SetButton(WheelButton::TriggerHappy5, input.IsKeyPressed(KEY_7));
+        SetButton(WheelButton::TriggerHappy6, input.IsKeyPressed(KEY_8));
+        SetButton(WheelButton::TriggerHappy7, input.IsKeyPressed(KEY_9));
+        SetButton(WheelButton::TriggerHappy8, input.IsKeyPressed(KEY_0));
+        SetButton(WheelButton::TriggerHappy9, input.IsKeyPressed(KEY_LEFTSHIFT));
+        SetButton(WheelButton::TriggerHappy10, input.IsKeyPressed(KEY_SPACE));
+        SetButton(WheelButton::TriggerHappy11, input.IsKeyPressed(KEY_TAB));
+        SetButton(WheelButton::TriggerHappy12, input.IsKeyPressed(KEY_ENTER));
     }
     NotifyStateChanged();
 }
@@ -699,12 +735,20 @@ void GamepadDevice::SendState() {
         return;
     }
 
+    if (use_gadget) {
+        if (!state_dirty.load(std::memory_order_acquire)) {
+            NotifyStateChanged();
+        }
+        return;
+    }
+
     if (use_uhid) {
         SendUHIDReport();
         return;
     }
 
     std::lock_guard<std::mutex> lock(state_mutex);
+    uint32_t button_bits = BuildButtonBitsLocked();
 
     // Steering (ABS_X)
     EmitEvent(EV_ABS, ABS_X, static_cast<int16_t>(steering));
@@ -720,32 +764,10 @@ void GamepadDevice::SendState() {
     EmitEvent(EV_ABS, ABS_RZ, throttle_val);
 
     // Buttons
-    EmitEvent(EV_KEY, BTN_SOUTH, buttons["BTN_SOUTH"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_EAST, buttons["BTN_EAST"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_WEST, buttons["BTN_WEST"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_NORTH, buttons["BTN_NORTH"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TL, buttons["BTN_TL"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TR, buttons["BTN_TR"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TL2, buttons["BTN_TL2"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TR2, buttons["BTN_TR2"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_SELECT, buttons["BTN_SELECT"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_START, buttons["BTN_START"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_THUMBL, buttons["BTN_THUMBL"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_THUMBR, buttons["BTN_THUMBR"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_MODE, buttons["BTN_MODE"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_DEAD, buttons["BTN_DEAD"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY1, buttons["BTN_TRIGGER_HAPPY1"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY2, buttons["BTN_TRIGGER_HAPPY2"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY3, buttons["BTN_TRIGGER_HAPPY3"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY4, buttons["BTN_TRIGGER_HAPPY4"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY5, buttons["BTN_TRIGGER_HAPPY5"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY6, buttons["BTN_TRIGGER_HAPPY6"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY7, buttons["BTN_TRIGGER_HAPPY7"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY8, buttons["BTN_TRIGGER_HAPPY8"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY9, buttons["BTN_TRIGGER_HAPPY9"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY10, buttons["BTN_TRIGGER_HAPPY10"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY11, buttons["BTN_TRIGGER_HAPPY11"] ? 1 : 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY12, buttons["BTN_TRIGGER_HAPPY12"] ? 1 : 0);
+    for (size_t i = 0; i < button_states.size(); ++i) {
+        bool pressed = (button_bits >> i) & 0x1u;
+        EmitEvent(EV_KEY, kButtonCodes[i], pressed ? 1 : 0);
+    }
 
     // D-Pad
     EmitEvent(EV_ABS, ABS_HAT0X, dpad_x);
@@ -754,7 +776,7 @@ void GamepadDevice::SendState() {
     EmitEvent(EV_SYN, SYN_REPORT, 0);
 }
 
-std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
+std::array<uint8_t, 13> GamepadDevice::BuildHIDReport() {
     // G29 HID Report structure (13 bytes total as defined by descriptor):
     // Byte 0-1: X (Steering) - 16-bit, little endian, 0-65535, center=32768
     // Byte 2-3: Y (Unused) - 16-bit, constant 65535
@@ -766,7 +788,7 @@ std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
     // Lock state mutex to prevent race with FFB thread
     std::lock_guard<std::mutex> lock(state_mutex);
     
-    std::vector<uint8_t> report(13, 0);
+    std::array<uint8_t, 13> report{};
     
     // X axis: Steering - convert from -32768..32767 to 0..65535
     uint16_t steering_u = static_cast<uint16_t>(static_cast<int16_t>(steering) + 32768);
@@ -801,34 +823,7 @@ std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
     
     report[8] = hat & 0x0F;
     
-    // Buttons: Pack 26 buttons into 4 bytes (32 bits, use 26)
-    uint32_t button_bits = 0;
-    if (buttons["BTN_SOUTH"]) button_bits |= (1 << 0);
-    if (buttons["BTN_EAST"]) button_bits |= (1 << 1);
-    if (buttons["BTN_WEST"]) button_bits |= (1 << 2);
-    if (buttons["BTN_NORTH"]) button_bits |= (1 << 3);
-    if (buttons["BTN_TL"]) button_bits |= (1 << 4);
-    if (buttons["BTN_TR"]) button_bits |= (1 << 5);
-    if (buttons["BTN_TL2"]) button_bits |= (1 << 6);
-    if (buttons["BTN_TR2"]) button_bits |= (1 << 7);
-    if (buttons["BTN_SELECT"]) button_bits |= (1 << 8);
-    if (buttons["BTN_START"]) button_bits |= (1 << 9);
-    if (buttons["BTN_THUMBL"]) button_bits |= (1 << 10);
-    if (buttons["BTN_THUMBR"]) button_bits |= (1 << 11);
-    if (buttons["BTN_MODE"]) button_bits |= (1 << 12);
-    if (buttons["BTN_DEAD"]) button_bits |= (1 << 13);
-    if (buttons["BTN_TRIGGER_HAPPY1"]) button_bits |= (1 << 14);
-    if (buttons["BTN_TRIGGER_HAPPY2"]) button_bits |= (1 << 15);
-    if (buttons["BTN_TRIGGER_HAPPY3"]) button_bits |= (1 << 16);
-    if (buttons["BTN_TRIGGER_HAPPY4"]) button_bits |= (1 << 17);
-    if (buttons["BTN_TRIGGER_HAPPY5"]) button_bits |= (1 << 18);
-    if (buttons["BTN_TRIGGER_HAPPY6"]) button_bits |= (1 << 19);
-    if (buttons["BTN_TRIGGER_HAPPY7"]) button_bits |= (1 << 20);
-    if (buttons["BTN_TRIGGER_HAPPY8"]) button_bits |= (1 << 21);
-    if (buttons["BTN_TRIGGER_HAPPY9"]) button_bits |= (1 << 22);
-    if (buttons["BTN_TRIGGER_HAPPY10"]) button_bits |= (1 << 23);
-    if (buttons["BTN_TRIGGER_HAPPY11"]) button_bits |= (1 << 24);
-    if (buttons["BTN_TRIGGER_HAPPY12"]) button_bits |= (1 << 25);
+    uint32_t button_bits = BuildButtonBitsLocked();
     report[9] = button_bits & 0xFF;
     report[10] = (button_bits >> 8) & 0xFF;
     report[11] = (button_bits >> 16) & 0xFF;
@@ -838,13 +833,11 @@ std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
 }
 
 void GamepadDevice::SendUHIDReport() {
-    std::vector<uint8_t> report_data = BuildHIDReport();
+    auto report_data = BuildHIDReport();
     
     if (use_gadget) {
-        // USB Gadget: Write raw HID report directly
-        if (write(fd, report_data.data(), report_data.size()) < 0) {
-            // Silently ignore write errors
-        }
+        // USB Gadget: Write raw HID report directly with retry on EAGAIN
+        WriteHIDBlocking(report_data.data(), report_data.size());
     } else {
         // UHID: Wrap in uhid_event structure
         struct uhid_event ev;
@@ -860,7 +853,6 @@ void GamepadDevice::SendUHIDReport() {
 }
 
 void GamepadDevice::SendNeutral() {
-    if (fd < 0) return;
     {
         std::lock_guard<std::mutex> lock(state_mutex);
         steering = 0.0f;
@@ -872,9 +864,14 @@ void GamepadDevice::SendNeutral() {
         clutch = 0.0f;
         dpad_x = 0;
         dpad_y = 0;
-        buttons.clear();
+        button_states.fill(0);
     }
-    SendState();
+
+    if (use_gadget) {
+        NotifyStateChanged();
+    } else {
+        SendState();
+    }
 }
 
 void GamepadDevice::EmitEvent(uint16_t type, uint16_t code, int32_t value) {
@@ -890,6 +887,57 @@ void GamepadDevice::EmitEvent(uint16_t type, uint16_t code, int32_t value) {
 int16_t GamepadDevice::ClampSteering(int16_t value) {
     // int16_t is already in range [-32768, 32767], no clamping needed
     return value;
+}
+
+void GamepadDevice::SetButton(WheelButton button, bool pressed) {
+    button_states[static_cast<size_t>(button)] = pressed ? 1 : 0;
+}
+
+uint32_t GamepadDevice::BuildButtonBitsLocked() const {
+    uint32_t bits = 0;
+    for (size_t i = 0; i < button_states.size(); ++i) {
+        if (button_states[i]) {
+            bits |= (1u << i);
+        }
+    }
+    return bits;
+}
+
+bool GamepadDevice::WriteHIDBlocking(const uint8_t* data, size_t size) {
+    if (fd < 0) {
+        return false;
+    }
+
+    size_t written = 0;
+    while (written < size) {
+        ssize_t ret = write(fd, data + written, size - written);
+        if (ret > 0) {
+            written += static_cast<size_t>(ret);
+            continue;
+        }
+
+        if (ret == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                pollfd p{};
+                p.fd = fd;
+                p.events = POLLOUT;
+                int poll_ret = poll(&p, 1, 5);
+                if (poll_ret <= 0) {
+                    if (poll_ret == -1 && errno == EINTR) {
+                        continue;
+                    }
+                    std::this_thread::sleep_for(std::chrono::microseconds(500));
+                    continue;
+                }
+                continue;
+            }
+        }
+        return false;
+    }
+    return true;
 }
 
 void GamepadDevice::ProcessUHIDEvents() {
@@ -940,7 +988,7 @@ void GamepadDevice::ProcessUHIDEvents() {
                     reply.u.get_report_reply.id = ev.u.get_report.id;
                     reply.u.get_report_reply.err = 0;
                     
-                    std::vector<uint8_t> report = BuildHIDReport();
+                    auto report = BuildHIDReport();
                     reply.u.get_report_reply.size = report.size();
                     memcpy(reply.u.get_report_reply.data, report.data(), report.size());
                     
@@ -1042,16 +1090,25 @@ void GamepadDevice::ReadGadgetOutput() {
 }
 
 void GamepadDevice::FFBUpdateThread() {
-    // Keep a subtle baseline force and let big slip spikes stand out
     float filtered_ffb = 0.0f;
     using clock = std::chrono::steady_clock;
     auto last = clock::now();
-    std::unique_lock<std::mutex> lock(state_mutex);
-    while (ffb_running && running) {
+
+    while (true) {
+        std::unique_lock<std::mutex> lock(state_mutex);
         ffb_cv.wait_for(lock, std::chrono::milliseconds(1));
         if (!ffb_running || !running) {
             break;
         }
+
+        // Snapshot shared state so we can do heavier math outside the lock
+        int16_t local_force = ffb_force;
+        int16_t local_autocenter = ffb_autocenter;
+        float local_offset = ffb_offset;
+        float local_velocity = ffb_velocity;
+        float local_gain = ffb_gain;
+        float local_steering = steering;
+        lock.unlock();
 
         auto now = clock::now();
         float dt = std::chrono::duration<float>(now - last).count();
@@ -1059,9 +1116,8 @@ void GamepadDevice::FFBUpdateThread() {
         if (dt > 0.01f) dt = 0.01f;
         last = now;
 
-        float commanded_force = ShapeFFBTorque(static_cast<float>(ffb_force));
+        float commanded_force = ShapeFFBTorque(static_cast<float>(local_force));
 
-        // Filter only the game-provided torque to kill high frequency chatter
         const float force_filter_hz = 38.0f;
         float alpha = 1.0f - std::exp(-dt * force_filter_hz);
         if (alpha < 0.0f) alpha = 0.0f;
@@ -1069,45 +1125,45 @@ void GamepadDevice::FFBUpdateThread() {
         filtered_ffb += (commanded_force - filtered_ffb) * alpha;
 
         float spring = 0.0f;
-        if (ffb_autocenter > 0) {
-            spring = -(steering * static_cast<float>(ffb_autocenter)) / 32768.0f;
+        if (local_autocenter > 0) {
+            spring = -(local_steering * static_cast<float>(local_autocenter)) / 32768.0f;
         }
 
         const float offset_limit = 22000.0f;
-        float target_offset = (filtered_ffb + spring) * ffb_gain;
-        if (target_offset > offset_limit) target_offset = offset_limit;
-        if (target_offset < -offset_limit) target_offset = -offset_limit;
+        float target_offset = (filtered_ffb + spring) * local_gain;
+        target_offset = std::clamp(target_offset, -offset_limit, offset_limit);
 
-        // Critically damped second-order response for smooth motion without oscillation
         const float stiffness = 120.0f;
         const float damping = 8.0f;
         const float max_velocity = 90000.0f;
-        float error = target_offset - ffb_offset;
-        ffb_velocity += error * stiffness * dt;
+        float error = target_offset - local_offset;
+        local_velocity += error * stiffness * dt;
         float damping_factor = std::exp(-damping * dt);
-        ffb_velocity *= damping_factor;
-        if (ffb_velocity > max_velocity) {
-            ffb_velocity = max_velocity;
-        } else if (ffb_velocity < -max_velocity) {
-            ffb_velocity = -max_velocity;
+        local_velocity *= damping_factor;
+        local_velocity = std::clamp(local_velocity, -max_velocity, max_velocity);
+
+        local_offset += local_velocity * dt;
+        if (local_offset > offset_limit) {
+            local_offset = offset_limit;
+            local_velocity = 0.0f;
+        } else if (local_offset < -offset_limit) {
+            local_offset = -offset_limit;
+            local_velocity = 0.0f;
         }
 
-        ffb_offset += ffb_velocity * dt;
-        if (ffb_offset > offset_limit) {
-            ffb_offset = offset_limit;
-            ffb_velocity = 0.0f;
-        } else if (ffb_offset < -offset_limit) {
-            ffb_offset = -offset_limit;
-            ffb_velocity = 0.0f;
+        lock.lock();
+        if (!ffb_running || !running) {
+            break;
         }
-
+        ffb_offset = local_offset;
+        ffb_velocity = local_velocity;
         bool steering_changed = ApplySteeringLocked();
         lock.unlock();
+
         if (steering_changed) {
             state_dirty.store(true, std::memory_order_release);
             state_cv.notify_all();
         }
-        lock.lock();
     }
 }
 
