@@ -66,6 +66,7 @@
     - `Read(int&)` — drains device queues, updates aggregated key/mouse state, drops disconnected devices
     - `CheckToggle()` — returns true on Ctrl+M press edge
     - `Grab(bool)` — grabs/ungrabs every tracked keyboard/mouse-capable fd via `EVIOCGRAB`
+    - `ResetState()` — clears aggregated key counters when devices are released
     - `IsKeyPressed(int) const` — returns aggregated key state
 
 ### src/config.h / src/config.cpp
@@ -752,7 +753,7 @@ The live USB Gadget writer (internally still using the UHID report builder) hold
 
 1. `CheckToggle()` detects Ctrl+M press **and** release while holding `state_mutex`, flips `enabled`, and returns the new value.
 2. The main loop immediately calls `input.Grab(enabled)` while still under the same loop iteration, so `enabled == false` guarantees `EVIOCGRAB` is released before the next batch of events is read.
-3. Every time the toggle flips (enable → disable or disable → enable), `SendNeutral()` pushes a centered HID snapshot so the host always samples G29-resting values before we hand input back and forth, preventing “stuck trigger” heuristics in games.
+3. When transitioning to disabled, `Input::ResetState()` zeroes the aggregated key counters so missed key-up events (while ungrabbed) never leave throttles/buttons latched. Immediately after, `SendNeutral()` pushes a centered HID snapshot so the host always samples G29-resting values before we hand input back and forth, preventing “stuck trigger” heuristics in games. Enabling also emits a neutral frame so the host restarts from a sane baseline.
 4. Because `SendState()` can no longer race against `FFBUpdateThread()`, the HID report writer never clobbers the `enabled` latch mid-frame, so Ctrl+M release consistently ungrabs both the keyboard and mouse.
 
 This structural contract removes the data race entirely and couples the grab/ungrab sequence to an atomic state transition, preventing the stuck-grab failure mode observed previously.
