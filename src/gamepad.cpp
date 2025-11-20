@@ -101,7 +101,10 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
     }
 
     input.Grab(enable);
-    NotifyStateChanged();
+        if (!enable) {
+            SendNeutral();
+        }
+        NotifyStateChanged();
     std::cout << (enable ? "Emulation ENABLED" : "Emulation DISABLED") << std::endl;
 }
 
@@ -260,6 +263,7 @@ bool GamepadDevice::Create() {
     if (!ffb_thread.joinable()) {
         ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
     }
+    SendNeutral();
     return true;
 }
 
@@ -859,51 +863,20 @@ void GamepadDevice::SendUHIDReport() {
 
 void GamepadDevice::SendNeutral() {
     if (fd < 0) return;
-    
-    // Reset steering to center
-    steering = 0;
-    throttle = 0;
-    brake = 0;
-    
-    // Zero all axes (center steering wheel)
-    EmitEvent(EV_ABS, ABS_X, 0);
-    EmitEvent(EV_ABS, ABS_Y, 32767);  // Match real G29
-    
-    // Reset pedals to resting position (inverted: 32767 = not pressed)
-    EmitEvent(EV_ABS, ABS_Z, 32767);
-    EmitEvent(EV_ABS, ABS_RZ, 32767);
-    
-    // Zero all 25 buttons
-    EmitEvent(EV_KEY, BTN_TRIGGER, 0);
-    EmitEvent(EV_KEY, BTN_THUMB, 0);
-    EmitEvent(EV_KEY, BTN_THUMB2, 0);
-    EmitEvent(EV_KEY, BTN_TOP, 0);
-    EmitEvent(EV_KEY, BTN_TOP2, 0);
-    EmitEvent(EV_KEY, BTN_PINKIE, 0);
-    EmitEvent(EV_KEY, BTN_BASE, 0);
-    EmitEvent(EV_KEY, BTN_BASE2, 0);
-    EmitEvent(EV_KEY, BTN_BASE3, 0);
-    EmitEvent(EV_KEY, BTN_BASE4, 0);
-    EmitEvent(EV_KEY, BTN_BASE5, 0);
-    EmitEvent(EV_KEY, BTN_BASE6, 0);
-    EmitEvent(EV_KEY, BTN_DEAD, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY1, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY2, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY3, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY4, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY5, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY6, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY7, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY8, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY9, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY10, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY11, 0);
-    EmitEvent(EV_KEY, BTN_TRIGGER_HAPPY12, 0);
-    
-    // Zero D-Pad
-    EmitEvent(EV_ABS, ABS_HAT0X, 0);
-    EmitEvent(EV_ABS, ABS_HAT0Y, 0);
-    EmitEvent(EV_SYN, SYN_REPORT, 0);
+    {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        steering = 0.0f;
+        user_steering = 0.0f;
+        ffb_offset = 0.0f;
+        ffb_velocity = 0.0f;
+        throttle = 0.0f;
+        brake = 0.0f;
+        clutch = 0.0f;
+        dpad_x = 0;
+        dpad_y = 0;
+        buttons.clear();
+    }
+    SendState();
 }
 
 void GamepadDevice::EmitEvent(uint16_t type, uint16_t code, int32_t value) {
