@@ -208,7 +208,7 @@ wheel-hid-emulator/
 ## Threading and Synchronization
 
 - **Main Thread:** Runs main loop, handles input and state updates, and queues HID packets (direct emit only for UHID/uinput)
-- **FFB Physics Thread:** Runs `FFBUpdateThread()` (125 Hz) using snapshot/commit semantics to minimize lock time
+- **FFB Physics Thread:** Runs `FFBUpdateThread()` (125 Hz) using snapshot/commit semantics to minimize lock time; `ParseFFBCommand()` now wakes this thread immediately whenever new torque/autocenter data arrives so forces apply without a visible delay
 - **USB Gadget Polling Thread:** Runs `USBGadgetPollingThread()` when gadget mode is active; it is the only thread that touches `/dev/hidg0`
 - **Mutex:** `state_mutex` in `GamepadDevice` protects all shared state (steering, pedals, compact button bitset, enabled flag, etc.)
 

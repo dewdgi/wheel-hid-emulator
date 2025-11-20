@@ -1171,6 +1171,7 @@ void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
     if (size != 7) return;  // G29 FFB commands are always 7 bytes
     
     std::lock_guard<std::mutex> lock(state_mutex);
+    bool state_changed = false;
     
     uint8_t cmd = data[0];
     
@@ -1185,15 +1186,18 @@ void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
                 int8_t force = static_cast<int8_t>(data[2]) - 0x80;
                 // Invert direction (Logitech positive pushes toward center) and keep strength modest
                 ffb_force = static_cast<int16_t>(-force) * 48;
+                state_changed = true;
             }
             break;
             
         case 0x13:  // Stop effect / de-activate force
             ffb_force = 0;
+            state_changed = true;
             break;
             
         case 0xf5:  // Disable autocenter
             ffb_autocenter = 0;
+            state_changed = true;
             break;
             
         case 0xfe:  // Set autocenter parameters
@@ -1202,12 +1206,14 @@ void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
             // data[4] = spring rate
             if (data[1] == 0x0d) {
                 ffb_autocenter = static_cast<int16_t>(data[2]) * 16;  // Gentler spring
+                state_changed = true;
             }
             break;
             
         case 0x14:  // Activate autocenter
             if (ffb_autocenter == 0) {
                 ffb_autocenter = 1024;  // Default light autocenter
+                state_changed = true;
             }
             break;
             
@@ -1237,6 +1243,10 @@ void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
         default:
             // Unknown command - ignore
             break;
+    }
+
+    if (state_changed) {
+        ffb_cv.notify_all();
     }
 }
 
