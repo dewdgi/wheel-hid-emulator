@@ -38,19 +38,20 @@ bool Config::Load() {
     button_map["KEY_I"] = BTN_BASE4;
     button_map["KEY_O"] = BTN_BASE5;
     button_map["KEY_P"] = BTN_BASE6;
-    button_map["KEY_1"] = BTN_DEAD;
-    button_map["KEY_2"] = BTN_TRIGGER_HAPPY1;
-    button_map["KEY_3"] = BTN_TRIGGER_HAPPY2;
-    button_map["KEY_4"] = BTN_TRIGGER_HAPPY3;
-    button_map["KEY_5"] = BTN_TRIGGER_HAPPY4;
-    button_map["KEY_6"] = BTN_TRIGGER_HAPPY5;
-    button_map["KEY_7"] = BTN_TRIGGER_HAPPY6;
-    button_map["KEY_8"] = BTN_TRIGGER_HAPPY7;
-    button_map["KEY_9"] = BTN_TRIGGER_HAPPY8;
-    button_map["KEY_0"] = BTN_TRIGGER_HAPPY9;
-    button_map["KEY_LEFTSHIFT"] = BTN_TRIGGER_HAPPY10;
-    button_map["KEY_SPACE"] = BTN_TRIGGER_HAPPY11;
-    button_map["KEY_TAB"] = BTN_TRIGGER_HAPPY12;
+    button_map["KEY_1"] = BTN_MODE;
+    button_map["KEY_2"] = BTN_DEAD;
+    button_map["KEY_3"] = BTN_TRIGGER_HAPPY1;
+    button_map["KEY_4"] = BTN_TRIGGER_HAPPY2;
+    button_map["KEY_5"] = BTN_TRIGGER_HAPPY3;
+    button_map["KEY_6"] = BTN_TRIGGER_HAPPY4;
+    button_map["KEY_7"] = BTN_TRIGGER_HAPPY5;
+    button_map["KEY_8"] = BTN_TRIGGER_HAPPY6;
+    button_map["KEY_9"] = BTN_TRIGGER_HAPPY7;
+    button_map["KEY_0"] = BTN_TRIGGER_HAPPY8;
+    button_map["KEY_LEFTSHIFT"] = BTN_TRIGGER_HAPPY9;
+    button_map["KEY_SPACE"] = BTN_TRIGGER_HAPPY10;
+    button_map["KEY_TAB"] = BTN_TRIGGER_HAPPY11;
+    button_map["KEY_ENTER"] = BTN_TRIGGER_HAPPY12;
     
     return true;
 }
@@ -192,6 +193,7 @@ void Config::SaveDefault(const char* path) {
     file << "# Steering: Mouse horizontal movement\n";
     file << "# Throttle: Hold KEY_W to increase (0-100%)\n";
     file << "# Brake: Hold KEY_S to increase (0-100%)\n";
+    file << "# Clutch: Hold KEY_A to increase (0-100%)\n";
     file << "# D-Pad: Arrow keys (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT)\n\n";
     
     file << "[button_mapping]\n";
@@ -215,28 +217,29 @@ void Config::SaveDefault(const char* path) {
     file << "# Button 10: KEY_I          (Ignition / Engine Start)\n";
     file << "# Button 11: KEY_O          (Wiper / Rain Light)\n";
     file << "# Button 12: KEY_P          (Pause / Photo Mode)\n";
-    file << "# Button 13: KEY_1          (TC (Traction Control) Down)\n";
-    file << "# Button 14: KEY_2          (TC Up)\n";
-    file << "# Button 15: KEY_3          (ABS Down)\n";
-    file << "# Button 16: KEY_4          (ABS Up)\n";
-    file << "# Button 17: KEY_5          (Brake Bias Forward)\n";
-    file << "# Button 18: KEY_6          (Brake Bias Rearward)\n";
-    file << "# Button 19: KEY_7          (Engine Map / Fuel Mix -1)\n";
-    file << "# Button 20: KEY_8          (Engine Map / Fuel Mix +1)\n";
-    file << "# Button 21: KEY_9          (Request Pit Stop)\n";
-    file << "# Button 22: KEY_0          (Leaderboard / Standings)\n";
-    file << "# Button 23: KEY_LEFTSHIFT  (Look Left / Change Camera Left)\n";
+    file << "# Button 13: KEY_1          (Mode / PS button)\n";
+    file << "# Button 14: KEY_2          (Traction control down)\n";
+    file << "# Button 15: KEY_3          (Traction control up)\n";
+    file << "# Button 16: KEY_4          (ABS down)\n";
+    file << "# Button 17: KEY_5          (ABS up)\n";
+    file << "# Button 18: KEY_6          (Brake bias forward)\n";
+    file << "# Button 19: KEY_7          (Brake bias rearward)\n";
+    file << "# Button 20: KEY_8          (Engine map / fuel mix -)\n";
+    file << "# Button 21: KEY_9          (Engine map / fuel mix +)\n";
+    file << "# Button 22: KEY_0          (Pit request / standings)\n";
+    file << "# Button 23: KEY_LEFTSHIFT  (Look left / change camera left)\n";
     file << "# Button 24: KEY_SPACE      (Handbrake / E-Brake)\n";
-    file << "# Button 25: KEY_TAB        (Change Camera / Cycle View)\n\n";
+    file << "# Button 25: KEY_TAB        (Change camera / cycle view)\n";
+    file << "# Button 26: KEY_ENTER      (Extra bind / headlights, etc.)\n\n";
     
     file << "# Note: Map these buttons to game functions via in-game controller settings.\n";
     file << "# The game will see this as a 'Logitech G29 Driving Force Racing Wheel'.\n\n";
     
     file << "# === AXES (Read-only, automatically handled) ===\n";
     file << "# ABS_X: Steering wheel (-32768 to 32767, mouse horizontal)\n";
-    file << "# ABS_Y: Unused (always 32767, matches real G29)\n";
-    file << "# ABS_Z: Brake pedal (32767 at rest, -32768 when fully pressed, KEY_S)\n";
-    file << "# ABS_RZ: Throttle pedal (32767 at rest, -32768 when fully pressed, KEY_W)\n";
+    file << "# ABS_Y: Clutch pedal (32767 at rest, -32768 fully pressed, KEY_A)\n";
+    file << "# ABS_Z: Throttle pedal (32767 at rest, -32768 fully pressed, KEY_W)\n";
+    file << "# ABS_RZ: Brake pedal (32767 at rest, -32768 fully pressed, KEY_S)\n";
     file << "# ABS_HAT0X: D-Pad horizontal (-1, 0, 1) - Arrow LEFT/RIGHT\n";
     file << "# ABS_HAT0Y: D-Pad vertical (-1, 0, 1) - Arrow UP/DOWN\n\n";
     
@@ -244,6 +247,7 @@ void Config::SaveDefault(const char* path) {
     file << "# Steering: Mouse horizontal movement (sensitivity adjustable above)\n";
     file << "# Throttle: Hold KEY_W (analog ramping 0-100%)\n";
     file << "# Brake: Hold KEY_S (analog ramping 0-100%)\n";
+    file << "# Clutch: Hold KEY_A (analog ramping 0-100%)\n";
     file << "# D-Pad: Arrow keys (UP/DOWN/LEFT/RIGHT)\n";
     file << "# Toggle Emulation: CTRL+M (enable/disable input grabbing)\n";
     file << "#\n";

@@ -25,7 +25,7 @@ void signal_handler(int signal) {
 
 bool check_root() {
     if (geteuid() != 0) {
-        std::cerr << "This program must be run as root to access /dev/uinput and grab input devices." << std::endl;
+        std::cerr << "This program must be run as root to configure the USB gadget and grab input devices." << std::endl;
         std::cerr << "Please run with: sudo ./wheel-emulator" << std::endl;
         return false;
     }
@@ -92,7 +92,6 @@ int main(int, char*[]) {
             gamepad.SendState();
         }
 
-        gamepad.ProcessUHIDEvents();
     }
     // On shutdown, notify all threads to wake up and exit
     gamepad.SetEnabled(false, input);

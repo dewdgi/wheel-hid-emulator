@@ -1,908 +1,147 @@
----
+## Wheel HID Emulator Logic (November 2025)
 
-
-# Wheel HID Emulator: Up-to-date Logical Structure (as of November 2025)
-
-## Main Components
-
-### src/main.cpp
-- **Global:** `std::atomic<bool> running` (controls shutdown for all threads)
-- **Functions:**
-  - `signal_handler(int)` — sets `running = false` on SIGINT (Ctrl+C)
-  - `check_root()` — ensures root privileges
-  - `main()`
-    - Checks root, sets up signal handler
-    - Loads config
-    - Creates `GamepadDevice` (hard-requires USB Gadget; exits if setup fails)
-    - Seeds `Input` with optional manual overrides from config
-    - **Main loop (event-driven):**
-      - While `running`:
-        - `input.WaitForEvents(8)` multiplexes all tracked devices (hotplug aware)
-        - `input.Read(mouse_dx)` — drains every available device, updates key aggregator and mouse delta
-        - `input.CheckToggle()` — edge-detects Ctrl+M, toggles enabled state
-        - If enabled:
-          - `gamepad.UpdateSteering(mouse_dx, config.sensitivity)`
-          - `gamepad.UpdateThrottle(input.IsKeyPressed(KEY_W))`
-          - `gamepad.UpdateBrake(input.IsKeyPressed(KEY_S))`
-          - `gamepad.UpdateClutch(input.IsKeyPressed(KEY_A))`
-          - `gamepad.UpdateButtons(input)` (writes into a compact `std::array<uint8_t, 26>`)
-          - `gamepad.UpdateDPad(input)`
-          - `gamepad.SendState()` (queues HID state for UHID/uinput, or just marks dirty for USB gadget)
-        - `gamepad.ProcessUHIDEvents()`
-    - On exit: `input.Grab(false)`
-
-### src/gamepad.h / src/gamepad.cpp
-- **Class:** `GamepadDevice`
-  - **State:**
-    - `fd` (device file descriptor)
-    - `use_uhid`, `use_gadget` (mode flags)
-    - `gadget_thread`, `gadget_running` (USB Gadget polling thread)
-    - `gadget_output_thread`, `gadget_output_running` (dedicated OUTPUT drain loop)
-    - `ffb_thread`, `ffb_running` (FFB physics thread)
-    - `state_mutex` (protects all state)
-    - `enabled`, `steering`, `throttle`, `brake`, `clutch`, `button_states` (26 packed bits), `dpad_x`, `dpad_y`, `state_dirty`
-    - `user_steering`, `ffb_force`, `ffb_autocenter`, `ffb_offset`, `ffb_velocity`, `ffb_gain`
-  - **Methods:**
-    - `Create()` (USB Gadget only at runtime) with helper routines `CreateUSBGadget()`, `CreateUHID()`, `CreateUInput()` retained for historical reference
-    - `UpdateSteering(int, int)`, `UpdateThrottle(bool)`, `UpdateBrake(bool)`, `UpdateClutch(bool)`, `UpdateButtons(const Input&)`, `UpdateDPad(const Input&)`
-    - `SendState()`, `SendUHIDReport()`, `BuildHIDReport()`, `SendNeutral()` (now stores state in arrays, keeps gadget writes single-threaded, and sends neutral snapshots without data races)
-    - `ProcessUHIDEvents()` — handles FFB and state requests
-    - `ParseFFBCommand(const uint8_t*, size_t)` — parses FFB commands
-    - `FFBUpdateThread()` — physics simulation, runs while `ffb_running && running`
-    - `USBGadgetPollingThread()` — USB comms writer, runs while `gadget_running && running`
-    - `USBGadgetOutputThread()` — waits on `/dev/hidg0` OUTPUT packets and feeds FFB parser
-    - `SetEnabled(bool, Input&)`, `IsEnabled()`, `ToggleEnabled(Input&)` — enable/disable logic, grabs/ungrabs devices
-    - `EmitEvent(...)`, `ClampSteering(...)`
-
-### src/input.h / src/input.cpp
-- **Class:** `Input`
-  - **State:**
-    - `devices` (vector of all open `/dev/input/event*` descriptors with capabilities, per-device key shadows, manual flag)
-    - `keyboard_override`, `mouse_override` (optional config pins)
-    - `keys[KEY_MAX]` (aggregated key state) and `key_counts[KEY_MAX]` (per-key active device count)
-    - `prev_toggle` (for Ctrl+M edge detection)
-  - **Methods:**
-    - `DiscoverKeyboard(const std::string&)`, `DiscoverMouse(const std::string&)` — store overrides and trigger refresh
-    - `RefreshDevices()` — rescans `/dev/input` and hotplugs active devices (auto + manual) but now defers the expensive scan until ~40 ms of input inactivity (with a 5 s forced cap) so gameplay input never stalls during hotplug detection
-      - When both keyboard and mouse overrides are supplied, auto-detected devices are immediately closed and skipped so only the pinned descriptors remain
-    - `WaitForEvents(int timeout_ms)` — polls all tracked descriptors (returns early on activity)
-    - `Read(int&)` — drains device queues, updates aggregated key/mouse state, drops disconnected devices
-    - `CheckToggle()` — returns true on Ctrl+M press edge
-    - `Grab(bool)` — grabs/ungrabs every tracked keyboard/mouse-capable fd via `EVIOCGRAB`
-    - `ResetState()` — clears aggregated key counters when devices are released
-    - `IsKeyPressed(int) const` — returns aggregated key state
-
-### src/config.h / src/config.cpp
-- **Class:** `Config`
-  - **State:**
-    - `sensitivity`, `keyboard_device`, `mouse_device`, `button_map`
-  - **Methods:**
-    - `Load()`, `LoadFromFile(const char*)`, `SaveDefault(const char*)`, `ParseINI(const std::string&)`
-
-### Threading Model
-- **Main thread:** runs main loop, handles input, state update, and report sending (direct writes only occur for UHID/uinput; gadget mode simply flags `state_dirty`)
-- **FFB Physics thread:** runs `FFBUpdateThread()` (125 Hz) using snapshot copies so heavy math happens outside the mutex, then commits the result in one lock+apply step
-- **USB Gadget polling thread:** runs `USBGadgetPollingThread()` when gadget mode is active; it is the sole writer to `/dev/hidg0`, retrying writes until the host consumes the report
-- **USB Gadget OUTPUT thread:** runs `USBGadgetOutputThread()` whenever gadget mode is active so the `/dev/hidg0` OUTPUT queue is drained immediately and FFB packets never starve
-- **Mutex:** `state_mutex` gates all shared state transitions and ensures button arrays, axes, and FFB parameters stay coherent across threads
-
-### Device Grabbing and Shutdown
-- `input.Grab(bool)` is called on enable/disable and at shutdown
-- All device I/O is non-blocking or signal-interruptible
-- All threads check both their own running flag and global `running`
-
-### Control Flow Summary
-- Main loop: checks for Ctrl+M (toggle), Ctrl+C (shutdown), and updates state at 100Hz
-- All input and output is non-blocking, and all state is protected by mutexes where needed
+This document matches the current gadget-only implementation. Every subsystem described below exists in the repository today, and any outdated UHID/uinput paths referenced in older notes have been removed from both code and documentation.
 
 ---
 
-**This document is now fully synchronized with the actual codebase as of November 2025.**
+## Runtime Stages
+
+1. **Startup**
+   - `main.cpp` ensures root, installs SIGINT handler, loads `/etc/wheel-emulator.conf`.
+   - `GamepadDevice::Create()` provisions the ConfigFS gadget, opens `/dev/hidg0`, and starts the three helper threads (FFB physics, gadget writer, gadget OUTPUT).
+   - `Input` scans `/dev/input/event*`, honoring optional overrides from the config.
+2. **Enabled Loop**
+   - Main loop waits up to 8 ms for input, drains every keyboard/mouse fd, and checks Ctrl+M.
+   - When enabled, the loop updates steering, pedals, buttons, and D-pad, then calls `SendState()` to wake the gadget writer thread.
+   - The gadget writer serializes a 13-byte HID report that matches the Logitech G29 descriptor and writes it to `/dev/hidg0` until the host accepts it.
+   - The gadget OUTPUT thread parses 7-byte OUTPUT reports for FFB, waking the physics loop as soon as torque data arrives.
+3. **Shutdown**
+   - Ctrl+C flips the global `running` flag, unblocks every condition variable, and joins all threads.
+   - `GamepadDevice::DestroyUSBGadget()` unbinds the UDC and removes the ConfigFS tree so no stale devices remain.
 
 ---
 
-**Summary:**
-- All logical constructs (loops, if/else, switches, function definitions, mutexes, threads, and major control flow) are now explicitly documented and mapped to their source files and line-level logic. This enables full traceability and strict audit compliance.
-- **All input reading and device I/O in the main loop must be non-blocking or signal-interruptible (handle EINTR) to guarantee responsiveness to Ctrl+M and Ctrl+C.**
-
-# Wheel HID Emulator: Logic & Architecture
-
----
-
-## File Structure (as of November 19, 2025)
-
-```
-wheel-hid-emulator/
-├── Makefile
-├── README.md
-├── logics.md
-├── cleanup_gadget.sh
-├── test_descriptor.py
-├── wheel-emulator (binary, built)
-└── src/
-  ├── main.cpp
-  ├── gamepad.cpp
-  ├── gamepad.h
-  ├── input.cpp
-  ├── input.h
-  ├── config.cpp
-  └── config.h
-```
-
----
-
-## Code Structure: Loops, Threads, and Function Calls
-
-
-### Main Loop (`src/main.cpp`)
-
-**Location:** `int main()`
-
-**Flow:**
-1. Check for root privileges
-2. Load config (`Config::Load()`)
-3. Create virtual device (`GamepadDevice::Create()`)
-4. Discover keyboard/mouse (`Input::DiscoverKeyboard()`, `Input::DiscoverMouse()`)
-5. Print status, wait for enable
-6. **Main loop (while running):**
-  - `input.Read(mouse_dx)` (**must be non-blocking or handle EINTR to remain responsive to signals and toggles**)
-  - `input.CheckToggle()` (Ctrl+M toggles enabled state)
-  - If enabled:
-    - `gamepad.UpdateSteering(mouse_dx, config.sensitivity)`
-    - `gamepad.UpdateThrottle(input.IsKeyPressed(KEY_W))`
-    - `gamepad.UpdateBrake(input.IsKeyPressed(KEY_S))`
-    - `gamepad.UpdateClutch(input.IsKeyPressed(KEY_A))`
-    - `gamepad.UpdateButtons(input)`
-    - `gamepad.UpdateDPad(input)`
-    - `gamepad.SendState()`
-  - `gamepad.ProcessUHIDEvents()`
-  - `usleep(8000)` (8ms, 125Hz)
-7. On exit: cleanup, ungrab devices
-
----
-
-### Gamepad Device (`src/gamepad.cpp`/`.h`)
-
-**Class:** `GamepadDevice`
-
-**Key Methods:**
-- `Create()`: Ensures USB Gadget backend is configured; aborts otherwise
-- `UpdateSteering(int delta, int sensitivity)`: Sets user torque from mouse
-- `UpdateThrottle(bool)`, `UpdateBrake(bool)`, `UpdateClutch(bool)`: Ramping logic for pedals
-- `UpdateButtons(const Input&)`: Maps 26 buttons from keyboard
-- `UpdateDPad(const Input&)`: Maps D-Pad from arrow keys
-- `SendState()`: Sends HID report (mutex-protected)
-- `ProcessUHIDEvents()`: Handles FFB/OUTPUT events
-- `SetEnabled(bool, Input&)`, `ToggleEnabled(Input&)`, `IsEnabled()`: Atomic enable/disable, grabs/ungrabs devices
-
-**Threads:**
-- `FFBUpdateThread()`: Physics simulation at 125Hz (mutex-protected)
-- `USBGadgetPollingThread()`: Handles USB host polling (event-driven) and writes HID IN reports
-- `USBGadgetOutputThread()`: Separate loop that blocks on OUTPUT transfers so FFB commands are parsed immediately
-
-**Mutex Discipline:**
-- All state updates and report sending are protected by `state_mutex`.
-
----
-
-### Input System (`src/input.cpp`/`.h`)
-
-**Class:** `Input`
-
-**Key Methods:**
-- `DiscoverKeyboard()`, `DiscoverMouse()`: Device detection/selection
-- `Read(int&)`: Reads events, updates key/mouse state
-- `CheckToggle()`: Detects Ctrl+M edge for enable/disable
-- `Grab(bool)`: Grabs/ungrabs devices with `EVIOCGRAB`
-- `IsKeyPressed(int)`: Returns key state
-
----
-
-### Config System (`src/config.cpp`/`.h`)
-
-**Class:** `Config`
-
-**Key Methods:**
-- `Load()`: Loads config from `/etc/wheel-emulator.conf`
-- `SaveDefault(const char*)`: Writes default config
-- `ParseINI(const std::string&)`: INI parsing logic
-
----
-
-## Threading and Synchronization
-
-- **Main Thread:** Runs main loop, handles input and state updates, and queues HID packets (direct emit only for UHID/uinput)
-- **FFB Physics Thread:** Runs `FFBUpdateThread()` (125 Hz) using snapshot/commit semantics to minimize lock time; `ParseFFBCommand()` now wakes this thread immediately whenever new torque/autocenter data arrives so forces apply without a visible delay
-- **USB Gadget Polling Thread:** Runs `USBGadgetPollingThread()` when gadget mode is active; it is the only writer touching `/dev/hidg0`
-- **USB Gadget OUTPUT Thread:** Runs `USBGadgetOutputThread()` in gadget mode; drains `/dev/hidg0` OUTPUT reports immediately so FFB packets hit the physics loop without delay
-- **Mutex:** `state_mutex` in `GamepadDevice` protects all shared state (steering, pedals, compact button bitset, enabled flag, etc.)
-
----
-
-## Function/Call Reference (by file)
+## Modules & Responsibilities
 
 ### `src/main.cpp`
-- `main()`
-  - `signal_handler()`
-  - `check_root()`
-  - `Config::Load()`
-  - `GamepadDevice::Create()`
-  - `Input::DiscoverKeyboard()`
-  - `Input::DiscoverMouse()`
-  - `Input::WaitForEvents()`
-  - `Input::Read()`
-  - `Input::CheckToggle()`
-  - `GamepadDevice::ToggleEnabled()`
-  - `GamepadDevice::IsEnabled()`
-  - `GamepadDevice::UpdateSteering()`
-  - `GamepadDevice::UpdateThrottle()`
-  - `GamepadDevice::UpdateBrake()`
-  - `GamepadDevice::UpdateClutch()`
-  - `GamepadDevice::UpdateButtons()`
-  - `GamepadDevice::UpdateDPad()`
-  - `GamepadDevice::SendState()`
-  - `GamepadDevice::ProcessUHIDEvents()`
+- Owns the lifecycle: config load, gadget creation, hotplug discovery, and the control loop.
+- Maintains `running` and the `Ctrl+M` toggle state (via `Input::CheckToggle`).
+- Computes frame delta for steering smoothing, clamps `dt` to 50 ms to prevent physics spikes, and enforces graceful shutdown.
 
-### `src/gamepad.cpp`/`.h`
-- `GamepadDevice::Create()`
-- `GamepadDevice::CreateUSBGadget()`
-- `GamepadDevice::CreateUHID()`
-- `GamepadDevice::CreateUInput()`
-- `GamepadDevice::UpdateSteering()`
-- `GamepadDevice::UpdateThrottle()`
-- `GamepadDevice::UpdateBrake()`
-- `GamepadDevice::UpdateClutch()`
-- `GamepadDevice::UpdateButtons()`
-- `GamepadDevice::UpdateDPad()`
-- `GamepadDevice::SendState()`
-- `GamepadDevice::SendUHIDReport()`
-- `GamepadDevice::BuildHIDReport()`
-- `GamepadDevice::ProcessUHIDEvents()`
-- `GamepadDevice::ParseFFBCommand()`
-- `GamepadDevice::FFBUpdateThread()`
-- `GamepadDevice::USBGadgetPollingThread()`
-- `GamepadDevice::USBGadgetOutputThread()`
-- `GamepadDevice::SetEnabled()`
-- `GamepadDevice::ToggleEnabled()`
-- `GamepadDevice::IsEnabled()`
+### `src/input.cpp`
+- Tracks every relevant `/dev/input/event*` device with capabilities, per-device key shadows, and grab state.
+- Auto-detects keyboard/mouse devices unless both overrides are specified, in which case only the pinned fds stay open.
+- Implements `WaitForEvents(timeout_ms)` via `poll`, so the main loop sleeps until activity or timeout.
+- Aggregates key presses into `keys[KEY_MAX]`, accumulates mouse X delta, and exposes `IsKeyPressed(keycode)` lookups.
+- `Grab(bool)` issues `EVIOCGRAB` for exclusive access while the emulator is enabled and resets all key counters when disabled to avoid stuck inputs.
 
-### `src/input.cpp`/`.h`
-- `Input::DiscoverKeyboard()`
-- `Input::DiscoverMouse()`
-- `Input::RefreshDevices()`
-- `Input::WaitForEvents()`
-- `Input::Read()`
-- `Input::CheckToggle()`
-- `Input::Grab()`
-- `Input::IsKeyPressed()`
+### `src/gamepad.cpp`
+- Holds the canonical wheel state behind `state_mutex`: steering, user steering, FFB offset/velocity, three pedals, D-pad axes, 26 button bits, enable flag, and FFB parameters.
+- `CreateUSBGadget()` performs the full ConfigFS ritual (IDs, strings, hid.usb0 function, configs/c.1 link, and UDC bind) and opens `/dev/hidg0` non-blocking.
+- `USBGadgetPollingThread()` is the only writer to `/dev/hidg0`. It waits on `state_cv`, builds a 13-byte report with `BuildHIDReport()`, then calls `WriteHIDBlocking()` until the transfer completes.
+- `USBGadgetOutputThread()` polls for OUTPUT data, reassembles 7-byte packets, and hands them to `ParseFFBCommand()` for decoding.
+- `FFBUpdateThread()` runs at ~125 Hz: shapes torque, blends autocenter springs, applies gain, feeds the damped spring model, and nudges steering by applying `ffb_offset` before clamping to ±32768.
+- `ToggleEnabled()` flips the `enabled` flag under the mutex, then calls `input.Grab()` and `SendNeutral()` so the host always sees a stable frame when control changes.
 
-### `src/config.cpp`/`.h`
-- `Config::Load()`
-- `Config::SaveDefault()`
-- `Config::ParseINI()`
-- `Config::LoadFromFile()`
+### `src/config.cpp`
+- Reads `/etc/wheel-emulator.conf`. If missing, writes a documented default that matches the code (including the KEY_ENTER button 26 binding and clutch axis description).
+- Recognized keys: `[devices] keyboard/mouse`, `[sensitivity] sensitivity` (1–100), `[ffb] gain` (0.1–4.0). Optional `[button_mapping]` entries are informational only.
 
 ---
 
-## Notes
-- All loops, threads, and function calls are now fully documented and mapped to their source files and responsibilities.
-- This section must be kept up to date with any code or architectural changes for strict audit compliance.
+## USB Gadget Flow
 
-**Last Updated:** November 19, 2025  
-**Version:** 2.0 (G29-accurate, all race fixes applied)
+1. `CreateUSBGadget()` loads `libcomposite`/`dummy_hcd` (best-effort) and ensures ConfigFS is mounted.
+2. Any previous gadget with the same name is removed to avoid collisions.
+3. The Logitech G29 descriptor (26 buttons, hat, four 16-bit axes, 7-byte OUTPUT report) is written to `functions/hid.usb0/report_desc` and `report_length` is set to 13.
+4. The hid function is linked into `configs/c.1`, string tables are populated, and the first available UDC is bound.
+5. `/dev/hidg0` opens in non-blocking read/write mode. All IN traffic goes through `WriteHIDBlocking`; all OUT traffic is drained in `ReadGadgetOutput` to keep the kernel queue empty.
 
----
-
-## Overview
-
-This project fully emulates a Logitech G29 wheel, including all axes, pedals, and buttons, matching the real device in every detail. The emulator presents itself as a G29-compatible HID device, ensuring maximum compatibility with games and drivers.
-
-- **Axes:** Steering, Accelerator, Brake, Clutch (all inverted pedals as per G29 spec)
-- **Button count:** 26 (matching the real G29: 13 base, 1 dead, 12 trigger-happy)
-- **Force Feedback:** Supported, with physics loop
-- **HID Descriptor:** Matches Linux kernel `hid-lg4ff` driver for G29
+Because UHID/uinput is gone, failure to create the gadget is fatal and surfaces clear instructions about ConfigFS/UDC requirements.
 
 ---
 
-## HID Descriptor
+## Thread Model (All reference `running` and per-thread atomics)
 
-The HID report descriptor and axis ranges are modeled after the real G29 as implemented in the Linux kernel (`drivers/hid/hid-lg4ff.c`):
+| Thread | Entry Point | Purpose | Notes |
+|--------|-------------|---------|-------|
+| Main | `main()` loop | Poll input, update state, request report send | Calls into `Input` & `GamepadDevice` synchronously |
+| Gadget Writer | `USBGadgetPollingThread()` | Sole HID IN writer | Waits on `state_cv`, honors `state_dirty` flag |
+| Gadget OUTPUT | `USBGadgetOutputThread()` | Reads 7-byte OUTPUT frames | Feeds `ParseFFBCommand`, tolerates partial reads |
+| FFB Physics | `FFBUpdateThread()` | Shapes torque, updates offsets | 125 Hz loop with damping/+gain math |
 
-- **Steering (ABS_X):** 0–65535, center at 32767/32768 (unsigned 16-bit)
-- **Accelerator (ABS_Z):** 0–65535, inverted (0 = pressed, 65535 = released)
-- **Brake (ABS_RZ):** 0–65535, inverted (0 = pressed, 65535 = released)
-- **Clutch (ABS_Y):** 0–65535, inverted (0 = pressed, 65535 = released)
-- **All axes:** unsigned 16-bit, as per G29 HID
-
-**Note:** Inversion of pedals is by design and matches the real G29 hardware and Linux driver.
-
----
-
-## Button Mapping
-
-The G29 has 26 buttons, mapped as follows (matching Linux input codes):
-
-| Button Name         | Linux Code    | HID Report Index |
-|---------------------|--------------|------------------|
-| Cross               | BTN_SOUTH    | 0                |
-| Circle              | BTN_EAST     | 1                |
-| Square              | BTN_WEST     | 2                |
-| Triangle            | BTN_NORTH    | 3                |
-| L1                  | BTN_TL       | 4                |
-| R1                  | BTN_TR       | 5                |
-| L2                  | BTN_TL2      | 6                |
-| R2                  | BTN_TR2      | 7                |
-| Share               | BTN_SELECT   | 8                |
-| Options             | BTN_START    | 9                |
-| L3                  | BTN_THUMBL   | 10               |
-| R3                  | BTN_THUMBR   | 11               |
-| PS                  | BTN_MODE     | 12               |
-| Dead                | BTN_DEAD     | 13               |
-| D-pad Up            | BTN_TRIGGER_HAPPY1 | 14         |
-| D-pad Down          | BTN_TRIGGER_HAPPY2 | 15         |
-| D-pad Left          | BTN_TRIGGER_HAPPY3 | 16         |
-| D-pad Right         | BTN_TRIGGER_HAPPY4 | 17         |
-| Red 1               | BTN_TRIGGER_HAPPY5 | 18         |
-| Red 2               | BTN_TRIGGER_HAPPY6 | 19         |
-| Red 3               | BTN_TRIGGER_HAPPY7 | 20         |
-| Red 4               | BTN_TRIGGER_HAPPY8 | 21         |
-| Red 5               | BTN_TRIGGER_HAPPY9 | 22         |
-| Red 6               | BTN_TRIGGER_HAPPY10| 23         |
-| Rotary Left         | BTN_TRIGGER_HAPPY11| 24         |
-| Rotary Right        | BTN_TRIGGER_HAPPY12| 25         |
-
-**Total:** 26 buttons, matching the real G29.
+Synchronization is limited to `state_mutex` (covers everything serialized into HID reports and the enable flag) plus `state_cv`/`ffb_cv` for thread wakeups. No other locks exist, so there are no ordering surprises.
 
 ---
 
-## Technical Specifications
+## HID State Layout
 
-| Feature         | Value (matches G29)      |
-|-----------------|-------------------------|
-| Steering        | ABS_X, 0–65535 unsigned |
-| Accelerator     | ABS_Z, 0–65535 unsigned, inverted |
-| Brake           | ABS_RZ, 0–65535 unsigned, inverted |
-| Clutch          | ABS_Y, 0–65535 unsigned, inverted |
-| Buttons         | 26                      |
-| Force Feedback  | Yes                     |
+`BuildHIDReport()` produces the exact 13-byte payload expected by the kernel `hid-lg` driver:
 
----
+1. Bytes 0–1: ABS_X steering (signed 16-bit shifted into unsigned space).
+2. Bytes 2–3: ABS_Y clutch (KEY_A). Value is `65535 - clutch_pct * 655.35` so it rests at 65535 like the real G29.
+3. Bytes 4–5: ABS_Z throttle (KEY_W) inverted the same way.
+4. Bytes 6–7: ABS_RZ brake (KEY_S) inverted.
+5. Byte 8 (low nibble): HAT encoded from arrow keys; high nibble padded.
+6. Bytes 9–12: 26 button bits packed little-endian. Button order matches Logitech’s enumeration and the comments in `config.cpp` / README.
 
-## FFB Physics System
-
-The force feedback (FFB) physics loop operates in signed 16-bit integer space (−32768…32767) for internal calculations. Before sending values to the HID report, these are mapped to the unsigned 0–65535 range as required by the G29 HID protocol.
-
-- **Steering:** Internal signed value mapped to unsigned HID range.
-- **Pedals:** Internal logic inverts and scales to match G29 pedal inversion.
-
-**Conversion Example:**
-```c
-// Internal: int16_t steering; // -32768 ... 32767
-// HID:      uint16_t hid_steering = (uint16_t)(steering + 32768);
-```
+`SendNeutral()` zeros the analog fields, hats, and buttons before notifying the gadget thread, ensuring graceful enable/disable and shutdown flows.
 
 ---
 
-## State Synchronization & Ungrab Guarantee
+## Force Feedback Pipeline
 
-The race condition in state synchronization has been fully resolved as of the current version. The emulator guarantees atomic updates to all state variables, matching the G29's behavior.
-
----
-
-## Code Version
-
-Current (FFB physics improvements + race condition fix **applied**)
-
----
-
-## References
-
-- Linux kernel source: `drivers/hid/hid-lg4ff.c`
-- Logitech G29 hardware documentation
-**Key Features:**
-- Real USB device emulation (USB Gadget ConfigFS)
-- Full Force Feedback (FFB) support with bidirectional communication
-- Physics-based steering simulation
-- 25 buttons + D-Pad + 4 axes (steering, brake, throttle, unused Y)
-- Configurable sensitivity and device paths
-- Live keyboard/mouse hotplug detection (auto-discovery, no CLI wizard)
+1. Host driver sends 7-byte OUTPUT packets (constant force, stop, autocenter, etc.).
+2. `ParseFFBCommand()` decodes opcodes (0x11, 0x13, 0x14, 0xf5, 0xfe, 0xf8…) and updates `ffb_force` or `ffb_autocenter` under the mutex.
+3. `ffb_cv.notify_all()` wakes the physics loop immediately after a state change.
+4. Physics loop runs at ~125 Hz:
+   - Shapes the raw force via `ShapeFFBTorque()` (softens low amplitudes, prevents saturation).
+   - Blends in autocenter springs.
+   - Applies config gain and a critically damped spring-mass model (stiffness 120, damping 8, offset clamp ±22 k).
+   - Calls `ApplySteeringLocked()` to merge user input (mouse) and FFB offset, clamping to the ±32768 HID range.
+5. If steering changed, `state_dirty` flips true so the gadget writer pushes a new frame instantly.
 
 ---
 
-## Architecture Overview
+## Controls & Mapping
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                         Main Loop                            │
-│                        (125 Hz)                              │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │ 1. Read Keyboard/Mouse Input (evdev)                   │ │
-│  │ 2. Check Ctrl+M Toggle (Enable/Disable)                │ │
-│  │ 3. Update Gamepad State (buttons, pedals, dpad)        │ │
-│  │ 4. Update Mouse Input → user_steering                  │ │
-│  │ 5. Send HID Report (steering, pedals, buttons)         │ │
-│  │ 6. Process UHID Events (FFB commands from game)        │ │
-│  └────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-                              ↕
-┌─────────────────────────────────────────────────────────────┐
-│                      FFB Physics Thread                      │
-│                        (125 Hz)                              │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │ 1. Shape/log filter ffb_force (kills chatter)          │ │
-│  │ 2. Add autocenter_spring from driver                   │ │
-│  │ 3. Scale by `[ffb] gain`                               │ │
-│  │ 4. Feed critically damped 2nd-order (offset/velocity)  │ │
-│  │ 5. Apply offset to steering & clamp to wheel limits    │ │
-│  └────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-                              ↕
-┌─────────────────────────────────────────────────────────────┐
-│                  USB Gadget Polling Thread                   │
-│                        (Event-Driven)                        │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │ - Waits on state_cv for dirty snapshots               │ │
-│  │ - Serializes HID report & WriteHIDBlocking()          │ │
-│  │ - Retries until host consumes the packet               │ │
-│  │ - Sole writer to /dev/hidg0                            │ │
-│  └────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-                              ↕
-┌─────────────────────────────────────────────────────────────┐
-│                 USB Gadget OUTPUT Thread                     │
-│                        (Event-Driven)                        │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │ - poll(POLLIN) on /dev/hidg0 (blocking)               │ │
-│  │ - Reads OUTPUT transfers in 7-byte chunks             │ │
-│  │ - Feeds ParseFFBCommand immediately                   │ │
-│  │ - Keeps FFB queue empty so physics reacts instantly   │ │
-│  └────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-```
+| Control | Source | HID Field |
+|---------|--------|-----------|
+| Steering | Mouse X delta | ABS_X |
+| Throttle | `KEY_W` | ABS_Z (inverted) |
+| Brake | `KEY_S` | ABS_RZ (inverted) |
+| Clutch | `KEY_A` | ABS_Y (inverted) |
+| D-Pad | Arrow keys | ABS_HAT0X/ABS_HAT0Y |
+| Buttons | `Q,E,F,G,H,R,T,Y,U,I,O,P,1,2,3,4,5,6,7,8,9,0,LeftShift,Space,Tab,Enter` | 26 button bits |
+
+All bindings are hardcoded in `GamepadDevice::UpdateButtons`. The README table mirrors these keys, including the new Enter binding for button 26.
 
 ---
 
-## Component Details
+## Configuration Impact
 
-### 1. Input System (`input.cpp`)
+- `sensitivity` (1–100, default 50) scales mouse deltas by `sensitivity * 0.05` and clamps per-frame contributions to ±2000 counts so a runaway mouse cannot saturate the axis in one tick.
+- `gain` (0.1–4.0, default 0.3) multiplies the torque target within the FFB loop; clamped inside `SetFFBGain()` to protect stability.
+- Device overrides allow deterministic keyboard/mouse selection; leaving either empty keeps hotplug discovery active for that class.
 
-**Purpose:** Read raw keyboard and mouse events from `/dev/input/eventX` devices.
-
-**Device Discovery:**
-- Continuously rescans `/dev/input` (500ms cadence) for new `event*` files
-- Opens any device advertising keyboard (`EV_KEY` with alpha keys) and/or mouse (`REL_X`) capability
-- Accepts manual overrides from config (kept open even if auto-scan would skip them)
-- Hotplug-aware: newly attached keyboards/mice become usable as soon as they emit events; removed devices are dropped automatically
-
-**Key State Tracking:**
-- Maintains aggregated boolean array `keys[KEY_MAX]` plus per-key device reference counts
-- Each device stores its own `key_shadow` vector so unplugging clears any pressed keys (prevents stuck inputs)
-- Accumulates mouse X delta per frame (steering input)
-- Edge detection for Ctrl+M toggle (enable/disable emulation)
-
-**Device Grabbing:**
-- `EVIOCGRAB` for exclusive device access when emulation enabled
-- Prevents desktop from receiving input during gameplay
-- Released on Ctrl+M toggle or Ctrl+C exit
+`SaveDefault()` now describes the clutch axis, inverted pedals, and all 26 buttons (including KEY_ENTER). This keeps `/etc/wheel-emulator.conf` aligned with the executable without requiring the user to inspect code.
 
 ---
 
-### 2. Virtual Device Creation (`gamepad.cpp`)
+## Lifecycle Guarantees
 
-**Runtime Behavior (Nov 2025+):** `GamepadDevice::Create()` now hard-fails unless the USB Gadget backend succeeds. The emulator will exit with guidance if ConfigFS, libcomposite/dummy_hcd, or a UDC are missing.
-
-Immediately after the gadget and helper threads are up, `SendNeutral()` pushes a centered HID report so the host samples the canonical G29 ranges even before the user enables control.
-
-#### Active Path: USB Gadget ConfigFS
-- **Path:** `/dev/hidg0`
-- **Creates:** Real USB HID device via Linux kernel's USB Gadget framework
-- **Driver Binding:** Kernel's `hid-lg` driver binds automatically (VID:046d PID:c24f)
-- **FFB Support:** Full bidirectional communication via OUTPUT reports
-- **Requirements:** `CONFIG_USB_CONFIGFS=y`, `dummy_hcd` or real UDC
-- **Advantages:**
-  - Games see authentic USB device on bus
-  - Proper USB interface enumeration
-  - Windows/Wine compatibility
-  - Native driver support
-
-#### Legacy Helpers (not invoked at runtime)
-- `CreateUHID()` and `CreateUInput()` remain in the tree for archival/testing purposes but are no longer reachable through `Create()`. They should be considered dormant unless the creation sequence is explicitly rewritten.
+- **Enable/Disable:** Ctrl+M grabs/ungrabs devices via `Input::Grab`, resets aggregated key state, sends a neutral HID frame, and logs the new mode. Grabbing occurs outside the state mutex to avoid deadlocks if `EVIOCGRAB` blocks.
+- **Signal Safety:** All blocking syscalls in threads treat `EINTR` as retryable. The SIGINT handler only toggles `running` and writes a message, so shutdown is safe even if the gadget threads are mid-transfer.
+- **Hotplug Safety:** Each device’s `key_shadow` is flushed when the fd disconnects, releasing any held buttons so games never see stuck inputs after a keyboard unplug.
 
 ---
 
-### 3. HID Descriptor
+## Troubleshooting Hooks
 
-**Logitech G29 HID Report Descriptor:**
-```
-Application: Joystick (0x04)
-- INPUT Report (13 bytes, no report ID):
-  - ABS_X (16-bit): Steering wheel (0-65535, center=32768)
-  - ABS_Y (16-bit): Unused, constant 65535
-  - ABS_Z (16-bit): Brake pedal (inverted: 65535=rest, 0=pressed)
-  - ABS_RZ (16-bit): Throttle pedal (inverted: 65535=rest, 0=pressed)
-  - HAT0 (4-bit): D-Pad (8 directions + neutral)
-  - Buttons (25-bit): BTN_1 through BTN_25
-  
-- OUTPUT Report (7 bytes, no report ID):
-  - FFB command buffer for hid-lg driver
-  - Commands: constant force, autocenter, range, LEDs, etc.
-```
-
-**Critical Design:**
-- **No Report IDs:** G29 uses simple descriptor without report IDs
-- **Inverted Pedals:** Real G29 firmware uses inverted axes (32767=rest)
-- **OUTPUT Report Required:** Must be present for hid-lg driver binding
+- **`cleanup_gadget.sh`** removes the ConfigFS gadget if a crash leaves it behind.
+- `GamepadDevice::Create()` prints detailed guidance (ConfigFS mount, libcomposite, dummy_hcd, UDC availability) for the only supported backend: USB gadget.
+- `lsusb` should show `046d:c24f` whenever the gadget is enabled. If not, re-run the cleanup script or ensure a hardware/virtual UDC is loaded.
 
 ---
 
-### 4. Force Feedback System
-
-**Architecture:** Physics-based simulation running in dedicated thread.
-
-#### FFB Command Processing
-
-**Game → Driver → Emulator:**
-1. Game sends FFB effect via kernel FFB API
-2. Kernel's `hid-lg` driver translates to G29 protocol
-3. Driver sends 7-byte OUTPUT report to device
-4. Emulator parses command in `ParseFFBCommand()`
-
-**Supported Commands:**
-- `0x11`: Constant force effect (main steering forces)
-- `0x13`: Stop effect / disable force
-- `0x14`: Enable autocenter spring
-- `0xf5`: Disable autocenter spring
-- `0xfe`: Set autocenter parameters (strength, spring rate)
-- `0xf8`: Extended commands (wheel range, LEDs, mode switching)
-
-#### Physics Model
-
-**State Variables:**
-- `ffb_force` (int16_t): Raw constant-force magnitude from the game
-- `ffb_autocenter` (int16_t): Spring coefficient requested by driver
-- `ffb_offset` (float): Current steering deflection contributed by FFB
-- `ffb_velocity` (float): Rate-of-change term for the second-order response
-- `ffb_gain` (float): User-configurable multiplier loaded from `[ffb] gain` in the config
-- `steering`, `user_steering`: Combined with `ffb_offset` inside `ApplySteeringLocked()`
-
-**Physics Loop (125 Hz):**
-```cpp
-// 1. Shape game torque for road feel (nonlinear gain curve)
-commanded = ShapeFFBTorque(ffb_force)
-
-// 2. Low-pass filter to kill chatter (one-pole @ force_filter_hz)
-filtered += (commanded - filtered) * alpha
-
-// 3. Add autocenter spring and apply user gain
-spring = -(steering * ffb_autocenter) / 32768.0f
-target = (filtered + spring) * ffb_gain
-
-// 4. Critically damped 2nd-order response
-error = target - ffb_offset
-ffb_velocity += error * stiffness * dt
-ffb_velocity *= exp(-damping * dt)
-ffb_velocity = clamp(ffb_velocity, ±max_velocity)
-ffb_offset += ffb_velocity * dt (clamped to ±offset_limit)
-
-// 5. Apply combined steering
-ApplySteeringLocked(user_steering + ffb_offset)
-```
-
-**Key Properties:**
-- **Filtered:** High-frequency impulses from some games no longer cause audible wheel chatter
-- **Gain knob:** `[ffb] gain` in `/etc/wheel-emulator.conf` scales the final torque (0.1–4.0)
-- **Second-order smoothing:** Prevents oscillations while still tracking large forces quickly
-- **Spring-aware:** Autocenter from games stacks cleanly with user override and manual gain
-- **Race-Free:** Still guarded by `state_mutex`
-
----
-
-### 5. Input Mapping
-
-#### Steering (Mouse X Axis)
-```cpp
-if (delta != 0) {
-  constexpr float base_gain = 0.05f;
-  constexpr float max_step = 2000.0f;
-  float step = std::clamp(delta * sensitivity * base_gain,
-              -max_step,
-              max_step);
-  user_steering = std::clamp(user_steering + step,
-                 -32767.0f,
-                 32767.0f);
-  ApplySteeringLocked();
-}
-```
-
-**Characteristics:**
-- **Linear scaling:** Mouse deltas are multiplied by `sensitivity * 0.05` for predictable feel
-- **Clamped step:** Each frame is limited to ±2000 counts so extremely fast mouse motion cannot spike past the range
-- **Force-style control:** Steering accumulates into `user_steering`, which then blends with FFB offset rather than overwriting it
-- **Full-range guard:** Result is clamped to the physical ±32767 span before generating the HID axis
-
-**Example:**
-- Sensitivity 50, delta 10 → `step = 10 * 50 * 0.05 = 25`; repeated movement keeps adding 25-count quanta until ±32767 is reached
-
-#### Pedals (W/S Keys)
-```cpp
-// Instant on/off (matching digital keyboard input)
-throttle = W_pressed ? 100.0f : 0.0f;
-brake    = S_pressed ? 100.0f : 0.0f;
-
-int16_t throttle_axis = 32767 - static_cast<int16_t>(throttle * 655.35f);
-int16_t brake_axis    = 32767 - static_cast<int16_t>(brake * 655.35f);
-```
-
-**Characteristics:**
-- **Binary pedals:** Keyboard keys jump directly between rest and fully pressed (games can still smooth in software)
-- **Independent:** Keys are tracked separately, so both can be pressed at once
-- **Inverted output:** Values match real G29 hardware and stay in the `[-32768, 32767]` space before conversion
-
-#### Buttons (Keyboard Keys)
-25 buttons mapped to keys Q, E, F, G, H, R, T, Y, U, I, O, P, 1-9, 0, LShift, Space, Tab
-
-#### D-Pad (Arrow Keys)
-8-directional HAT switch: Up, Down, Left, Right, and diagonals
-
----
-
-### 6. Main Loop Flow
-
-**Initialization:**
-1. Check root privileges
-2. Load config from `/etc/wheel-emulator.conf`
-3. Create virtual G29 device (USB Gadget only; abort on failure)
-4. Seed `Input` overrides (optional `keyboard=` / `mouse=`); hotplug scanning begins immediately
-5. Start FFB physics thread
-6. Start USB Gadget polling (writer) thread when gadget mode is active
-7. Start USB Gadget OUTPUT thread to drain FFB packets (gadget mode only)
-8. Begin in **disabled** state (devices not grabbed)
-
-**Main Loop (125 Hz / 8ms):**
-```
-while (running) {
-  // 1. Wait for any device activity (8 ms max)
-  input.WaitForEvents(8);
-
-  // 2. Drain input events
-  input.Read(mouse_dx);
-    
-  // 3. Check Ctrl+M toggle
-    if (input.CheckToggle()) {
-        enabled = !enabled
-        input.Grab(enabled)  // Exclusive access
-    }
-    
-  // 4. Update state (if enabled)
-    if (enabled) {
-        gamepad.UpdateSteering(mouse_dx, sensitivity)
-        gamepad.UpdateThrottle(W_pressed)
-        gamepad.UpdateBrake(S_pressed)
-        gamepad.UpdateClutch(A_pressed)
-        gamepad.UpdateButtons(input)
-        gamepad.UpdateDPad(input)
-        gamepad.SendState()  // Push UHID/uinput report or flag gadget thread for next poll
-    }
-    
-    // 5. Process FFB events
-    gamepad.ProcessUHIDEvents()
-    
-    // 6. Loop immediately; `WaitForEvents` bounds the cadence
-}
-```
-
-**Cleanup (Ctrl+C):**
-1. Stop FFB thread
-2. Stop USB Gadget polling + OUTPUT threads
-3. Ungrab input devices
-4. Destroy virtual device
-5. Close file descriptors
-
-**Responsiveness Guarantee:**
-- All input reading and device I/O in the main loop must be non-blocking or handle EINTR (signal interruption), so that Ctrl+M (enable/disable) and Ctrl+C (shutdown) are always processed promptly. Blocking I/O without signal handling can cause the emulator to become unresponsive.
-
----
-
-## Threading Model
-
-### Thread 1: Main Loop (125 Hz)
-- Reads keyboard/mouse input
-- Updates button/pedal state
-- Calls `SendState()` which either pushes UHID/uinput events immediately or just marks `state_dirty` for the gadget writer
-- Processes incoming FFB commands
-- **Mutex:** Acquired briefly around each state update so input never stalls on long critical sections
-
-### Thread 2: FFB Physics (125 Hz)
-- Runs physics simulation
-- Copies the small set of shared parameters, releases the mutex, performs the math, then locks once more to commit the new offset/velocity and apply steering
-
-### Thread 3: USB Gadget Polling (Event-Driven)
-- Only active in USB Gadget mode
-- Wakes up when `state_dirty` is set, serializes the 13-byte G29 report, and calls `WriteHIDBlocking()` until the host accepts it
-- Sole writer to `/dev/hidg0`, so report ordering stays deterministic
-- **Mutex:** Locks only long enough to grab a snapshot right before serializing the HID report
-
-### Thread 4: USB Gadget OUTPUT (Event-Driven)
-- Also only active in gadget mode
-- Blocks on `poll(POLLIN)` for `/dev/hidg0`, reads OUTPUT transfers in 7-byte slices, and immediately calls `ParseFFBCommand()`
-- Keeps Logitech driver OUTPUT queue empty so the physics thread reacts as soon as the host sends torque updates
-- Shares no mutexes; only touches the small `gadget_output_pending` buffer and then defers to `ParseFFBCommand()` (which locks `state_mutex`)
-
-**Synchronization:**
-- All shared state protected by `state_mutex`
-- No deadlocks (short critical sections)
-- Consistent 125Hz timing across threads
-
----
-
-## State Synchronization & Ungrab Guarantee
-
-### Mutex Discipline
-
-`state_mutex` is the single writer/read lock for every shared signal (`steering`, `velocity`, `user_steering`, pedal state, button bitfields, and the `enabled` latch that drives grabbing). Any thread that touches those fields must hold the mutex, which guarantees the HID report is assembled from a single coherent snapshot and that the toggle edge cannot be torn by a concurrent physics update.
-
-**As of Nov 2025:**
-- The `ToggleEnabled` method in `GamepadDevice` now toggles the `enabled` state under the mutex, but calls `input.Grab()` outside the lock. This prevents deadlocks if `input.Grab()` blocks or takes time, ensuring the main loop remains responsive to Ctrl+M and Ctrl+C.
-
-### Locked SendState Paths
-
-```cpp
-void GamepadDevice::SendState() {
-  if (use_gadget) {
-    state_dirty.store(true, std::memory_order_release);
-    state_cv.notify_all();
-    return;
-  }
-  if (use_uhid) {
-    SendUHIDReport();
-    return;
-  }
-
-  std::lock_guard<std::mutex> lock(state_mutex);
-  uint32_t buttons = BuildButtonBitsLocked();
-  EmitEvent(EV_ABS, ABS_X, static_cast<int16_t>(steering));
-  EmitEvent(EV_ABS, ABS_Z, brake_axis);
-  EmitEvent(EV_ABS, ABS_RZ, throttle_axis);
-  EmitButtons(buttons);
-}
-
-void GamepadDevice::SendUHIDReport() {
-  auto report = BuildHIDReport();
-  if (use_gadget) {
-    WriteHIDBlocking(report.data(), report.size());
-  } else {
-    // Wrap in UHID_INPUT2 event
-  }
-}
-
-std::array<uint8_t, 13> GamepadDevice::BuildHIDReport() {
-  std::lock_guard<std::mutex> lock(state_mutex);
-  auto report = PackReport(steering, brake_axis, throttle_axis, hat_value, BuildButtonBitsLocked());
-  return report;
-}
-```
-
-Gadget transfers are now serialized through the polling thread, which loops on `poll(POLLOUT)` and `write()` until every byte lands, eliminating the dropped-frame window that previously appeared whenever `/dev/hidg0` returned `EAGAIN`.
-
-### Deterministic Toggle / Ungrab Flow
-
-1. `CheckToggle()` detects Ctrl+M press **and** release while holding `state_mutex`, flips `enabled`, and returns the new value.
-2. The main loop immediately calls `input.Grab(enabled)` while still under the same loop iteration, so `enabled == false` guarantees `EVIOCGRAB` is released before the next batch of events is read.
-3. When transitioning to disabled, `Input::ResetState()` zeroes the aggregated key counters so missed key-up events (while ungrabbed) never leave throttles/buttons latched. Immediately after, `SendNeutral()` pushes a centered HID snapshot so the host always samples G29-resting values before we hand input back and forth, preventing “stuck trigger” heuristics in games. Enabling also emits a neutral frame so the host restarts from a sane baseline.
-4. Because gadget writes are funneled through a single thread and UHID/uinput snapshots grab the mutex only while copying 26 button bits plus four axes, `SendState()` is no longer fighting with `FFBUpdateThread()`, and the toggle/ungrab flow stays deterministic.
-
-This structural contract removes the data race entirely and couples the grab/ungrab sequence to an atomic state transition, preventing the stuck-grab failure mode observed previously.
-
----
-
-## Configuration File
-
-**Location:** `/etc/wheel-emulator.conf`
-
-**Format:**
-```ini
-[devices]
-# keyboard=/dev/input/event6
-# mouse=/dev/input/event11
-keyboard=
-mouse=
-
-[sensitivity]
-sensitivity=50
-
-[ffb]
-gain=0.3
-```
-
-**Parameters:**
-- `keyboard` / `mouse`: Leave blank for auto (hotplug) or uncomment to pin specific `eventX`
-- `sensitivity`: Steering sensitivity 1-100 (default: 50) → multiplies mouse delta before feeding user torque
-- `gain`: Overall FFB strength multiplier (0.1–4.0, default 0.3) applied after filtering/autocenter
-
----
-
-## Runtime Device Tracking
-
-- Every 500 ms (or sooner when idle) the input layer scans `/dev/input` for `event*` nodes, but scans are deferred until 40 ms of inactivity (forced every 5 s) so active gameplay input never pauses.
-- Devices stay open as long as they advertise the needed capabilities (`EV_KEY` with alphanumeric keys and/or `REL_X`).
-- Manual overrides from the config are reopened on demand and marked as `manual`, so they are never dropped by the auto-pruner.
-- All open descriptors participate in a single `poll()` (`WaitForEvents`) and are drained each frame.
-- When a device disappears (hot-unplug, suspend, etc.), its pressed keys are released automatically thanks to the per-device `key_shadow` + `key_counts` bookkeeping.
-- Connecting a new keyboard or mouse mid-session requires no restart; the next scan will pick it up and steering/keys start working as soon as events arrive.
-
----
-
-## Technical Specifications
-
-### Device Identity
-- **Vendor ID:** 0x046d (Logitech, Inc.)
-- **Product ID:** 0xc24f (G29 Racing Wheel)
-- **Version:** 0x0111 (273 decimal)
-- **Bus Type:** BUS_USB
-- **Device Name:** "Logitech G29 Driving Force Racing Wheel"
-
-### Axes (4 total)
-- **ABS_X:** Steering wheel [-32768 to 32767, center=0]
-- **ABS_Y:** Clutch pedal [32767=rest, -32768=pressed] **INVERTED**
-- **ABS_Z:** Brake pedal [32767=rest, -32768=pressed] **INVERTED**
-- **ABS_RZ:** Throttle pedal [32767=rest, -32768=pressed] **INVERTED**
-
-### Buttons (26 total)
-- BTN_SOUTH, BTN_EAST, BTN_WEST, BTN_NORTH, BTN_TL, BTN_TR, BTN_TL2, BTN_TR2, BTN_SELECT, BTN_START, BTN_THUMBL, BTN_THUMBR, BTN_MODE, BTN_DEAD, BTN_TRIGGER_HAPPY1-12 (see table above)
-
-### D-Pad (HAT Switch)
-- ABS_HAT0X: Horizontal [-1, 0, 1]
-- ABS_HAT0Y: Vertical [-1, 0, 1]
-- Combined: 8 directions + neutral
-
-### Update Rate
-- **Main Loop:** 125 Hz (8ms period)
-- **FFB Physics:** 125 Hz (8ms period)
-- **USB Polling:** Event-driven (host-initiated)
-
----
-
-## Physics Parameters
-
-### Force Filter
-- **Cutoff:** ~38 Hz (single-pole low-pass)
-- **Effect:** Smooths harsh constant-force packets and prevents audible chatter
-
-### Second-Order Response
-- **Stiffness:** 120.0f, **Damping:** 8.0f
-- **Behavior:** Critically damped; enforces ±22,000 offset limit and ±90,000 units/s velocity
-
-### FFB Gain
-- **Range:** 0.1 – 4.0 (configurable via `[ffb] gain`)
-- **Default:** 0.3 to match the new balanced baseline; raise if your wheel can handle stronger torque
-
-### Mouse Scaling
-- **Formula:** `delta * sensitivity * 20.0f`
-- **Deadzone:** ±2 pixels to avoid sensor jitter in neutral steering
-
----
-
-### Build & Run
-
-```bash
-make clean
-make
-
-sudo ./wheel-emulator
-# Press Ctrl+M to enable
-# Press Ctrl+M to disable
-# Press Ctrl+C to exit
-```
-
-### Cleanup USB Gadget
-```bash
-./cleanup_gadget.sh
-# Removes USB Gadget if stuck
-```
-
----
-
-**Document Version:** 2.0  
-**Code Version:** Current (FFB physics improvements + race condition fix needed)  
-**Author:** dewdgi  
-**Repository:** https://github.com/dewdgi/wheel-hid-emulator
+**Last verified:** November 2025 — matches commit where UHID/uinput fallbacks were deleted and KEY_ENTER became button 26. Keep this document in sync whenever bindings, threads, or gadget prerequisites change.
