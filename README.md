@@ -69,11 +69,11 @@ mouse=
 sensitivity=50
 
 [ffb]
-gain=0.1
+gain=0.3
 ```
 
 **Sensitivity:** 1-100 (default 50). Internally scaled by 0.2.  
-**FFB gain:** Multiplier (0.1–4.0) applied to in-game force feedback (default 0.1 for softer baseline).
+**FFB gain:** Multiplier (0.1–4.0) applied to in-game force feedback (default 0.3 for neutral baseline).
 
 ## How It Works
 

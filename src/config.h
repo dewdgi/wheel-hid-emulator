@@ -7,7 +7,7 @@
 class Config {
 public:
     int sensitivity = 50;
-    float ffb_gain = 0.1f;
+    float ffb_gain = 0.3f;
     std::string keyboard_device;  // e.g. "/dev/input/event6"
     std::string mouse_device;     // e.g. "/dev/input/event11"
     std::map<std::string, int> button_map;

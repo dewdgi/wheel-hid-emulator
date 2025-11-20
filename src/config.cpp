@@ -23,7 +23,7 @@ bool Config::Load() {
     
     // Set default values
     sensitivity = 50;
-    ffb_gain = 0.1f;
+    ffb_gain = 0.3f;
     
     // Set default button mappings (for reference - hardcoded in gamepad.cpp)
     button_map["KEY_Q"] = BTN_TRIGGER;
@@ -183,7 +183,7 @@ void Config::SaveDefault(const char* path) {
 
     file << "[ffb]\n";
     file << "# Overall force feedback strength multiplier (0.1 - 4.0)\n";
-    file << "gain=0.1\n\n";
+    file << "gain=0.3\n\n";
     
     file << "[controls]\n";
     file << "# Logitech G29 Racing Wheel Controls\n";

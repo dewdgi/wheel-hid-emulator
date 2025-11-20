@@ -811,13 +811,13 @@ mouse=
 sensitivity=50
 
 [ffb]
-gain=0.1
+gain=0.3
 ```
 
 **Parameters:**
 - `keyboard` / `mouse`: Leave blank for auto (hotplug) or uncomment to pin specific `eventX`
 - `sensitivity`: Steering sensitivity 1-100 (default: 50) → multiplies mouse delta before feeding user torque
-- `gain`: Overall FFB strength multiplier (0.1–4.0, default 0.1) applied after filtering/autocenter
+- `gain`: Overall FFB strength multiplier (0.1–4.0, default 0.3) applied after filtering/autocenter
 
 ---
 
@@ -874,7 +874,7 @@ gain=0.1
 
 ### FFB Gain
 - **Range:** 0.1 – 4.0 (configurable via `[ffb] gain`)
-- **Default:** 0.1 to keep stock feel gentle; raise if your wheel can handle stronger torque
+- **Default:** 0.3 to match the new balanced baseline; raise if your wheel can handle stronger torque
 
 ### Mouse Scaling
 - **Formula:** `delta * sensitivity * 20.0f`
