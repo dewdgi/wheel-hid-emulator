@@ -13,7 +13,7 @@
   - `main()`
     - Checks root, sets up signal handler
     - Loads config
-    - Creates `GamepadDevice` (tries USB Gadget, then UHID, then uinput)
+    - Creates `GamepadDevice` (hard-requires USB Gadget; exits if setup fails)
     - Seeds `Input` with optional manual overrides from config
     - **Main loop (event-driven):**
       - While `running`:
@@ -41,7 +41,7 @@
     - `state_mutex` (protects all state)
     - `enabled`, `steering`, `throttle`, `brake`, `clutch`, `buttons`, `dpad_x`, `dpad_y`, `ffb_force`, `ffb_autocenter`, `ffb_enabled`, `user_torque`
   - **Methods:**
-    - `Create()`, `CreateUSBGadget()`, `CreateUHID()`, `CreateUInput()` — device creation
+    - `Create()` (USB Gadget only at runtime) with helper routines `CreateUSBGadget()`, `CreateUHID()`, `CreateUInput()` retained for historical reference
     - `UpdateSteering(int, int)`, `UpdateThrottle(bool)`, `UpdateBrake(bool)`, `UpdateClutch(bool)`, `UpdateButtons(const Input&)`, `UpdateDPad(const Input&)`
     - `SendState()`, `SendUHIDReport()`, `BuildHIDReport()`, `SendNeutral()`
     - `ProcessUHIDEvents()` — handles FFB and state requests
@@ -161,7 +161,7 @@ wheel-hid-emulator/
 **Class:** `GamepadDevice`
 
 **Key Methods:**
-- `Create()`: Tries USB Gadget, then UHID, then uinput
+- `Create()`: Ensures USB Gadget backend is configured; aborts otherwise
 - `UpdateSteering(int delta, int sensitivity)`: Sets user torque from mouse
 - `UpdateThrottle(bool)`, `UpdateBrake(bool)`, `UpdateClutch(bool)`: Ramping logic for pedals
 - `UpdateButtons(const Input&)`: Maps 26 buttons from keyboard
@@ -470,43 +470,22 @@ Current (FFB physics improvements + race condition fix **applied**)
 
 ### 2. Virtual Device Creation (`gamepad.cpp`)
 
-**Three Methods (Priority Order):**
+**Runtime Behavior (Nov 2025+):** `GamepadDevice::Create()` now hard-fails unless the USB Gadget backend succeeds. The emulator will exit with guidance if ConfigFS, libcomposite/dummy_hcd, or a UDC are missing.
 
-#### Method 1: USB Gadget ConfigFS (Preferred)
+#### Active Path: USB Gadget ConfigFS
 - **Path:** `/dev/hidg0`
 - **Creates:** Real USB HID device via Linux kernel's USB Gadget framework
 - **Driver Binding:** Kernel's `hid-lg` driver binds automatically (VID:046d PID:c24f)
 - **FFB Support:** Full bidirectional communication via OUTPUT reports
 - **Requirements:** `CONFIG_USB_CONFIGFS=y`, `dummy_hcd` or real UDC
-- **Advantages:** 
+- **Advantages:**
   - Games see authentic USB device on bus
   - Proper USB interface enumeration
   - Windows/Wine compatibility
   - Native driver support
 
-#### Method 2: UHID (Fallback)
-- **Path:** `/dev/uhid`
-- **Creates:** Userspace HID device via UHID kernel interface
-- **Driver Binding:** Creates hidraw device, but not proper USB device
-- **FFB Support:** OUTPUT reports via `UHID_OUTPUT` events
-- **Requirements:** `uhid` kernel module
-- **Advantages:**
-  - Provides hidraw interface (better than uinput)
-  - FFB communication possible
-  - No USB Gadget hardware needed
-
-#### Method 3: UInput (Fallback)
-- **Path:** `/dev/uinput`
-- **Creates:** Input device via uinput subsystem
-- **Driver Binding:** Generic joystick/gamepad, no hid-lg
-- **FFB Support:** Registers capabilities but no actual FFB
-- **Advantages:**
-  - Always available
-  - Simple API
-- **Disadvantages:**
-  - No HIDRAW device
-  - No FFB communication
-  - Games may not recognize as G29
+#### Legacy Helpers (not invoked at runtime)
+- `CreateUHID()` and `CreateUInput()` remain in the tree for archival/testing purposes but are no longer reachable through `Create()`. They should be considered dormant unless the creation sequence is explicitly rewritten.
 
 ---
 
@@ -650,7 +629,7 @@ brake_axis = 65535 - (brake * 655.35f)
 **Initialization:**
 1. Check root privileges
 2. Load config from `/etc/wheel-emulator.conf`
-3. Create virtual G29 device (USB Gadget → UHID → uinput)
+3. Create virtual G29 device (USB Gadget only; abort on failure)
 4. Seed `Input` overrides (optional `keyboard=` / `mouse=`); hotplug scanning begins immediately
 5. Start FFB physics thread
 6. Start USB Gadget polling thread (if applicable)
@@ -765,7 +744,7 @@ std::vector<uint8_t> GamepadDevice::BuildHIDReport() {
 }
 ```
 
-Both delivery paths (UHID/USB Gadget and uinput) now obey the same snapshot rule, so whichever host transport is active always consumes identical state bytes.
+The live USB Gadget writer (internally still using the UHID report builder) holds the mutex while capturing state, and even the dormant uinput fallback shares the same snapshot rule, so every HID report is emitted from a coherent state.
 
 ### Deterministic Toggle / Ungrab Flow
 

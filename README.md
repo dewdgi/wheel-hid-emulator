@@ -15,8 +15,8 @@ Transform keyboard and mouse into a Logitech G29 Racing Wheel for racing games o
 
 ## Requirements
 
-- Linux with uinput support
-- Root privileges (for /dev/uinput access)
+- Linux kernel with USB Gadget ConfigFS enabled (`CONFIG_USB_CONFIGFS=y`, `libcomposite`, and either a hardware UDC or `dummy_hcd`)
+- Root privileges (required for ConfigFS setup and `/dev/hidg0` access)
 - g++ compiler with C++17 support
 
 ## Building
@@ -77,11 +77,11 @@ gain=0.1
 
 ## How It Works
 
-1. Creates virtual Logitech G29 wheel via `/dev/uinput`
+1. Creates a real USB Logitech G29 wheel via ConfigFS at `/dev/hidg0`
 2. Reads keyboard/mouse from `/dev/input/event*`
 3. When enabled (Ctrl+M), grabs devices for exclusive access
 4. Translates mouse/keyboard input to wheel/pedals/buttons
-5. Emits events at 125 Hz
+5. Streams HID reports through the USB Gadget thread at 125 Hz
 
 ## Technical Details
 
@@ -101,8 +101,8 @@ gain=0.1
 ## Troubleshooting
 
 **Wheel not detected:**
-- Check: `ls /dev/input/by-id/ | grep Logitech`
-- Test: `jstest /dev/input/js0` or `evtest`
+- Verify USB gadget enumerated: `lsusb | grep 046d:c24f`
+- Ensure ConfigFS is mounted and `libcomposite`/`dummy_hcd` modules are loaded
 
 **Wrong keyboard/mouse:**
 - Unplug/replug or specify exact `/dev/input/eventX` paths in the config

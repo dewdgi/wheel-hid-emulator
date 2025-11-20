@@ -247,41 +247,20 @@ bool GamepadDevice::CreateUHID() {
 }
 
 bool GamepadDevice::Create() {
-    // Try USB Gadget first (proper USB device with full driver support)
     std::cout << "Attempting to create device using USB Gadget (real USB device)..." << std::endl;
-    if (CreateUSBGadget()) {
-        if (!gadget_thread.joinable()) {
-            gadget_thread = std::thread(&GamepadDevice::USBGadgetPollingThread, this);
-        }
-        if (!ffb_thread.joinable()) {
-            ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
-        }
-        return true;
+    if (!CreateUSBGadget()) {
+        std::cerr << "USB Gadget creation failed; wheel emulator requires a USB gadget capable kernel" << std::endl;
+        std::cerr << "Ensure configfs is mounted, libcomposite/dummy_hcd modules are available, and a UDC is present." << std::endl;
+        return false;
     }
-    
-    // Try UHID second (provides HIDRAW support)
-    std::cout << "USB Gadget not available, trying UHID..." << std::endl;
-    if (CreateUHID()) {
-        if (!gadget_thread.joinable()) {
-            gadget_thread = std::thread(&GamepadDevice::USBGadgetPollingThread, this);
-        }
-        if (!ffb_thread.joinable()) {
-            ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
-        }
-        return true;
-    }
-    
-    // Fall back to uinput if both fail
-    std::cout << "UHID failed, falling back to uinput..." << std::endl;
-    std::cout << "Note: uinput doesn't provide HIDRAW, some games may not detect the wheel" << std::endl;
-    bool uinput_ok = CreateUInput();
+
     if (!gadget_thread.joinable()) {
         gadget_thread = std::thread(&GamepadDevice::USBGadgetPollingThread, this);
     }
     if (!ffb_thread.joinable()) {
         ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
     }
-    return uinput_ok;
+    return true;
 }
 
 bool GamepadDevice::CreateUSBGadget() {
