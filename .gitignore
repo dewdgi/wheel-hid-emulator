@@ -9,6 +9,7 @@ wheel-emulator
 # Build directories
 build/
 bin/
+findout/
 
 # Editor and IDE files
 .vscode/

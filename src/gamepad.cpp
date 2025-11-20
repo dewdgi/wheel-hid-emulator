@@ -470,13 +470,13 @@ std::array<uint8_t, 13> GamepadDevice::BuildHIDReport() {
     report[2] = clutch_u & 0xFF;
     report[3] = (clutch_u >> 8) & 0xFF;
 
-    uint16_t throttle_u = 65535 - static_cast<uint16_t>(throttle * 655.35f);
-    report[4] = throttle_u & 0xFF;
-    report[5] = (throttle_u >> 8) & 0xFF;
-
     uint16_t brake_u = 65535 - static_cast<uint16_t>(brake * 655.35f);
-    report[6] = brake_u & 0xFF;
-    report[7] = (brake_u >> 8) & 0xFF;
+    report[4] = brake_u & 0xFF;
+    report[5] = (brake_u >> 8) & 0xFF;
+
+    uint16_t throttle_u = 65535 - static_cast<uint16_t>(throttle * 655.35f);
+    report[6] = throttle_u & 0xFF;
+    report[7] = (throttle_u >> 8) & 0xFF;
 
     uint8_t hat = 0x0F;
     if (dpad_y == -1 && dpad_x == 0) hat = 0;
@@ -729,40 +729,43 @@ void GamepadDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
     uint8_t cmd = data[0];
 
     switch (cmd) {
-        case 0x11: {
-            uint16_t raw = static_cast<uint16_t>(data[3]) |
-                           (static_cast<uint16_t>(data[4]) << 8);
-            int16_t magnitude = static_cast<int16_t>(raw);
-            ffb_force = static_cast<int16_t>(-magnitude);
+        case 0x11: {  // Constant force slot update
+            int8_t force = static_cast<int8_t>(data[2]) - 0x80;
+            ffb_force = static_cast<int16_t>(-force) * 48;
             state_changed = true;
             break;
         }
-        case 0x13:
+        case 0x13:  // Stop force effect
             ffb_force = 0;
             state_changed = true;
             break;
-        case 0xf5:
-            ffb_autocenter = 0;
-            state_changed = true;
-            break;
-        case 0xfe:
-            if (data[1] == 0x0d) {
-                ffb_autocenter = static_cast<int16_t>(data[2]) * 16;
+        case 0xf5:  // Disable autocenter
+            if (ffb_autocenter != 0) {
+                ffb_autocenter = 0;
                 state_changed = true;
             }
             break;
-        case 0x14:
+        case 0xfe:  // Configure autocenter
+            if (data[1] == 0x0d) {
+                int16_t strength = static_cast<int16_t>(data[2]) * 16;
+                if (ffb_autocenter != strength) {
+                    ffb_autocenter = strength;
+                    state_changed = true;
+                }
+            }
+            break;
+        case 0x14:  // Enable default autocenter
             if (ffb_autocenter == 0) {
                 ffb_autocenter = 1024;
                 state_changed = true;
             }
             break;
-        case 0xf8:
+        case 0xf8:  // Extended commands
             switch (data[1]) {
-                case 0x81:
-                case 0x12:
-                case 0x09:
-                case 0x0a:
+                case 0x81:  // Wheel range
+                case 0x12:  // LEDs
+                case 0x09:  // Mode switch
+                case 0x0a:  // Mode revert on reset
                 default:
                     break;
             }
