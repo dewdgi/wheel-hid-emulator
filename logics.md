@@ -39,6 +39,7 @@ This document matches the current gadget-only implementation. Every subsystem de
 ### `src/gamepad.cpp`
 - Holds the canonical wheel state behind `state_mutex`: steering, user steering, FFB offset/velocity, three pedals, D-pad axes, 26 button bits, enable flag, and FFB parameters.
 - `CreateUSBGadget()` performs the full ConfigFS ritual (IDs, strings, hid.usb0 function, configs/c.1 link, and UDC bind) and opens `/dev/hidg0` non-blocking.
+- `BindUDC()` / `UnbindUDC()` toggle the USB connection instantly by writing to the gadget’s `UDC` file. The emulator boots with the gadget detached and only binds the controller once all input devices are grabbed and the neutral/snapshot frames are staged; disabling (or losing the mouse) unbinds immediately so the host sees a complete disconnect.
 - `USBGadgetPollingThread()` is the only writer to `/dev/hidg0`. It waits on `state_cv`, builds a 13-byte report with `BuildHIDReport()`, then calls `WriteHIDBlocking()` until the transfer completes. A short "warmup" burst (25 frames) is pushed any time we re-enable so games that are sitting in input menus still see fresh data even if nothing is moving yet.
 - `USBGadgetOutputThread()` polls for OUTPUT data, reassembles 7-byte packets, and hands them to `ParseFFBCommand()` for decoding.
 - `FFBUpdateThread()` runs at ~125 Hz: shapes torque, blends autocenter springs, applies gain, feeds the damped spring model, and nudges steering by applying `ffb_offset` before clamping to ±32768.
@@ -136,7 +137,7 @@ All bindings are hardcoded in `GamepadDevice::UpdateButtons`. The README table m
 
 ## Lifecycle Guarantees
 
-- **Enable/Disable:** Ctrl+M sets `grab_desired`, forces a device refresh, tries to grab both keyboard and mouse (failure aborts the enable immediately), keeps the aggregated key state alive even while ungrabbed, only resyncs hardware when `resync_pending` is set, writes a neutral HID frame directly while `output_enabled` is false, applies and writes the live snapshot, then enables the asynchronous writer and schedules the warmup burst. FFB output is ignored until this sequence completes, and the main loop continuously monitors for device loss—if the mouse or keyboard ungrabs or disappears, the wheel disables itself and sends a neutral frame right away.
+- **Enable/Disable:** Ctrl+M sets `grab_desired`, forces a device refresh, tries to grab both keyboard and mouse (failure aborts immediately), keeps the aggregated key state alive even while ungrabbed, only resyncs hardware when `resync_pending` is set, stages neutral + snapshot frames, binds the UDC (physically “plugs in” the wheel), writes the neutral frame, writes the snapshot, then enables the async writer and schedules the warmup burst. Disabling (or any device loss) writes a neutral frame, unbinds the UDC (host sees a disconnect), and releases the grabs. FFB output and gadget OUTPUT parsing stay muted the entire time so there’s never a stray torque packet.
 - **Signal Safety:** All blocking syscalls in threads treat `EINTR` as retryable. The SIGINT handler only toggles `running` and writes a message, so shutdown is safe even if the gadget threads are mid-transfer.
 - **Hotplug Safety:** Each device’s `key_shadow` is flushed when the fd disconnects, releasing any held buttons so games never see stuck inputs after a keyboard unplug.
 

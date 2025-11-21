@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <mutex>
 #include <thread>
+#include <string>
 
 class Input;
 extern std::atomic<bool> running;
@@ -88,6 +89,10 @@ private:
     uint32_t BuildButtonBitsLocked() const;
     bool WriteHIDBlocking(const uint8_t* data, size_t size);
     bool WriteReportBlocking(const std::array<uint8_t, 13>& report);
+    bool BindUDC();
+    bool UnbindUDC();
+    std::string GadgetUDCPath() const;
+    std::string DetectFirstUDC() const;
 
     int fd;
     std::thread gadget_thread;
@@ -99,6 +104,9 @@ private:
     std::atomic<bool> state_dirty;
     std::atomic<int> warmup_frames;
     std::atomic<bool> output_enabled;
+    std::mutex gadget_mutex;
+    bool udc_bound;
+    std::string udc_name;
     std::mutex state_mutex;
     std::condition_variable state_cv;
     std::condition_variable ffb_cv;

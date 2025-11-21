@@ -5,10 +5,12 @@
 #include <cerrno>
 #include <chrono>
 #include <cmath>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <dirent.h>
+#include <fstream>
 #include <fcntl.h>
 #include <iostream>
 #include <poll.h>
@@ -92,6 +94,28 @@ std::string HexValue(uint16_t value) {
     return std::string(buf);
 }
 
+std::string ReadTrimmedFile(const std::string& path) {
+    std::ifstream in(path);
+    if (!in) {
+        return {};
+    }
+    std::string line;
+    std::getline(in, line);
+    while (!line.empty() && std::isspace(static_cast<unsigned char>(line.back()))) {
+        line.pop_back();
+    }
+    return line;
+}
+
+bool WriteStringToFile(const std::string& path, const std::string& value) {
+    std::ofstream out(path);
+    if (!out) {
+        return false;
+    }
+    out << value;
+    return static_cast<bool>(out);
+}
+
 }  // namespace
 
 struct GamepadDevice::ControlSnapshot {
@@ -118,6 +142,7 @@ GamepadDevice::GamepadDevice()
     state_dirty = false;
         warmup_frames.store(0, std::memory_order_relaxed);
     output_enabled.store(false, std::memory_order_relaxed);
+    udc_bound = false;
     button_states.fill(0);
 }
 
@@ -131,6 +156,7 @@ void GamepadDevice::ShutdownThreads() {
     gadget_output_running = false;
         warmup_frames.store(0, std::memory_order_relaxed);
     output_enabled.store(false, std::memory_order_relaxed);
+    UnbindUDC();
 
     state_cv.notify_all();
     ffb_cv.notify_all();
@@ -169,6 +195,7 @@ bool GamepadDevice::Create() {
     ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
 
     SendNeutral(true);
+    UnbindUDC();
     return true;
 }
 
@@ -256,12 +283,19 @@ bool GamepadDevice::CreateUSBGadget() {
         return false;
     }
 
+    {
+        std::lock_guard<std::mutex> guard(gadget_mutex);
+        udc_name = ReadTrimmedFile(GadgetUDCPath());
+        udc_bound = !udc_name.empty();
+    }
+
     std::cout << "USB Gadget device created successfully!" << std::endl;
     std::cout << "Real USB Logitech G29 device (VID:046d PID:c24f)" << std::endl;
     return true;
 }
 
 void GamepadDevice::DestroyUSBGadget() {
+    UnbindUDC();
     const std::string gadget_name(kGadgetName);
     const std::string hid_function(kHidFunction);
 
@@ -276,6 +310,64 @@ void GamepadDevice::DestroyUSBGadget() {
     cleanup += "  cd .. && rmdir " + gadget_name + " 2>/dev/null || true; ";
     cleanup += "fi";
     system(cleanup.c_str());
+}
+
+std::string GamepadDevice::GadgetUDCPath() const {
+    return std::string("/sys/kernel/config/usb_gadget/") + kGadgetName + "/UDC";
+}
+
+std::string GamepadDevice::DetectFirstUDC() const {
+    DIR* dir = opendir("/sys/class/udc");
+    if (!dir) {
+        return {};
+    }
+    std::string result;
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        if (entry->d_name[0] == '.') {
+            continue;
+        }
+        result = entry->d_name;
+        break;
+    }
+    closedir(dir);
+    return result;
+}
+
+bool GamepadDevice::BindUDC() {
+    std::lock_guard<std::mutex> guard(gadget_mutex);
+    if (udc_bound) {
+        return true;
+    }
+    if (udc_name.empty()) {
+        udc_name = ReadTrimmedFile(GadgetUDCPath());
+        if (udc_name.empty()) {
+            udc_name = DetectFirstUDC();
+        }
+        if (udc_name.empty()) {
+            std::cerr << "[GamepadDevice] No UDC available to bind" << std::endl;
+            return false;
+        }
+    }
+    if (!WriteStringToFile(GadgetUDCPath(), udc_name)) {
+        std::cerr << "[GamepadDevice] Failed to bind UDC '" << udc_name << "'" << std::endl;
+        return false;
+    }
+    udc_bound = true;
+    return true;
+}
+
+bool GamepadDevice::UnbindUDC() {
+    std::lock_guard<std::mutex> guard(gadget_mutex);
+    if (!udc_bound) {
+        return true;
+    }
+    if (!WriteStringToFile(GadgetUDCPath(), "")) {
+        std::cerr << "[GamepadDevice] Failed to unbind UDC" << std::endl;
+        return false;
+    }
+    udc_bound = false;
+    return true;
 }
 
 bool GamepadDevice::IsEnabled() {
@@ -372,6 +464,15 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
         warmup_frames.store(0, std::memory_order_release);
         state_dirty.store(false, std::memory_order_release);
 
+        if (!BindUDC()) {
+            input.Grab(false);
+            {
+                std::lock_guard<std::mutex> lock(state_mutex);
+                enabled = false;
+            }
+            return;
+        }
+
         std::array<uint8_t, 13> neutral_report;
         {
             std::lock_guard<std::mutex> lock(state_mutex);
@@ -404,6 +505,7 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
         }
         WriteReportBlocking(neutral_report);
         input.Grab(false);
+        UnbindUDC();
     }
     std::cout << (enable ? "Emulation ENABLED" : "Emulation DISABLED") << std::endl;
 }

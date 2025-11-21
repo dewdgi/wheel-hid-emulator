@@ -88,14 +88,14 @@ Remap these inside your game just like a real Logitech wheel.
 
 ## Input Pipeline
 
-Each frame the main loop builds a snapshot of every pedal, button, and D-pad bit, then hands it plus the current mouse delta to `ProcessInputFrame()`. Inside the wheel device this snapshot is applied under a single mutex, so the host only ever sees whole frames—no more half-updated pedals or staggered button toggles. HID traffic (both IN and OUT) is hard-gated: nothing hits `/dev/hidg0` until the enable sequence has written a neutral frame and the first live snapshot.
+Each frame the main loop builds a snapshot of every pedal, button, and D-pad bit, then hands it plus the current mouse delta to `ProcessInputFrame()`. Inside the wheel device this snapshot is applied under a single mutex, so the host only ever sees whole frames—no more half-updated pedals or staggered button toggles. HID traffic (both IN and OUT) is hard-gated: the gadget stays unbound (physically disconnected) until the enable sequence has staged neutral + snapshot frames and explicitly re-binds the UDC; disabling or losing the mouse instantly unbinds again.
 
 ## Enable/Disable Flow
 
 1. Press **Ctrl+M**.
 2. The input layer refreshes `/dev/input/event*`, opens anything new, and sets `grab_desired` so every matching device is immediately `EVIOCGRAB`’d (even ones that hotplug later).
 3. Key state tracking keeps running, so pedal positions survive while ungrabbed; `ResyncKeyStates()` only re-queries hardware if something actually changed.
-4. Output stays muted until we synchronously write a neutral HID frame (while still holding the lock), then write the freshly captured snapshot. Only after those two frames succeed do we enable the async writer and schedule the ~25-frame warmup burst, so games sitting in an input menu instantly see consistent axes. All force-feedback OUTPUT packets are ignored until this switch completes, preventing random torque commands during startup. If the mouse or keyboard unplugs while enabled, the wheel immediately sends a neutral frame, mutes HID traffic, and releases both devices.
+4. Output stays muted until we synchronously write a neutral HID frame (while still holding the lock), bind the UDC (so the host actually sees the wheel), write the freshly captured snapshot, and only then enable the async writer plus the ~25-frame warmup burst. All force-feedback OUTPUT packets are ignored until this switch completes, preventing random torque commands during startup. If the mouse or keyboard unplugs while enabled, the wheel immediately sends a neutral frame, mutes HID traffic, unbinds the UDC (so the host thinks it was unplugged), and releases both devices.
 
 This pipeline makes rapid toggles cheap (tested at 100 Hz) while still guaranteeing the host receives a clean frame whenever control changes.
 
