@@ -64,6 +64,7 @@ Input::Input() : prev_toggle(false) {
     last_input_activity = std::chrono::steady_clock::time_point::min();
     last_keyboard_error = std::chrono::steady_clock::time_point::min();
     last_mouse_error = std::chrono::steady_clock::time_point::min();
+    last_toggle_time = std::chrono::steady_clock::time_point::min();
 }
 
 Input::~Input() {
@@ -390,7 +391,13 @@ bool Input::CheckToggle() {
     bool both = ctrl && m;
     bool toggled = false;
     if (both && !prev_toggle) {
-        toggled = true;
+        constexpr auto kDebounce = std::chrono::milliseconds(150);
+        auto now = std::chrono::steady_clock::now();
+        if (last_toggle_time == std::chrono::steady_clock::time_point::min() ||
+            now - last_toggle_time >= kDebounce) {
+            toggled = true;
+            last_toggle_time = now;
+        }
     }
     prev_toggle = both;
     return toggled;
