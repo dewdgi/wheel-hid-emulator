@@ -185,11 +185,30 @@ bool GamepadDevice::Create() {
         return false;
     }
 
+    SendNeutral(true);
+
+    std::array<uint8_t, 13> neutral_report;
+    {
+        std::lock_guard<std::mutex> lock(state_mutex);
+        neutral_report = BuildHIDReportLocked();
+    }
+
+    if (!WaitForEndpointReady()) {
+        std::cerr << "[GamepadDevice] HID endpoint never became ready after gadget creation" << std::endl;
+        DestroyUSBGadget();
+        return false;
+    }
+
+    if (!WriteReportBlocking(neutral_report)) {
+        std::cerr << "[GamepadDevice] Failed to send initial neutral frame" << std::endl;
+        DestroyUSBGadget();
+        return false;
+    }
+
     ffb_running = true;
     ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
 
-    SendNeutral(true);
-    UnbindUDC();
+    EnsureGadgetThreadsStarted();
     return true;
 }
 
@@ -528,7 +547,7 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
             snapshot_report = BuildHIDReportLocked();
         }
 
-        if (!BindUDC()) {
+        if (!udc_bound && !BindUDC()) {
             {
                 std::lock_guard<std::mutex> lock(state_mutex);
                 ApplyNeutralLocked(true);
@@ -539,8 +558,7 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
         }
 
         if (!WaitForEndpointReady()) {
-            std::cerr << "[GamepadDevice] HID endpoint never became ready; disconnecting" << std::endl;
-            UnbindUDC();
+            std::cerr << "[GamepadDevice] HID endpoint never became ready; holding neutral" << std::endl;
             input.Grab(false);
             {
                 std::lock_guard<std::mutex> lock(state_mutex);
@@ -550,8 +568,7 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
         }
 
         if (!WriteReportBlocking(neutral_report) || !WriteReportBlocking(snapshot_report)) {
-            std::cerr << "[GamepadDevice] Failed to prime HID reports; disconnecting" << std::endl;
-            UnbindUDC();
+            std::cerr << "[GamepadDevice] Failed to prime HID reports; holding neutral" << std::endl;
             input.Grab(false);
             {
                 std::lock_guard<std::mutex> lock(state_mutex);
@@ -579,7 +596,6 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
             std::cerr << "[GamepadDevice] Failed to send neutral frame while disabling" << std::endl;
         }
         input.Grab(false);
-        UnbindUDC();
     }
     std::cout << (enable ? "Emulation ENABLED" : "Emulation DISABLED") << std::endl;
 }
