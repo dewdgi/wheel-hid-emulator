@@ -89,10 +89,11 @@ private:
     uint32_t BuildButtonBitsLocked() const;
     bool WriteHIDBlocking(const uint8_t* data, size_t size);
     bool WriteReportBlocking(const std::array<uint8_t, 13>& report);
-    bool WaitForHostReady(int timeout_ms = 1200);
     bool BindUDC();
     bool UnbindUDC();
     std::string GadgetUDCPath() const;
+    std::string GadgetStatePath() const;
+    bool WaitForHostConfigured(int timeout_ms = 2000);
     std::string DetectFirstUDC() const;
     void EnsureGadgetThreadsStarted();
     void StopGadgetThreads();

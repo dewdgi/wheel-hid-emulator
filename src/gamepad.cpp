@@ -310,6 +310,10 @@ std::string GamepadDevice::GadgetUDCPath() const {
     return std::string("/sys/kernel/config/usb_gadget/") + kGadgetName + "/UDC";
 }
 
+std::string GamepadDevice::GadgetStatePath() const {
+    return std::string("/sys/kernel/config/usb_gadget/") + kGadgetName + "/state";
+}
+
 std::string GamepadDevice::DetectFirstUDC() const {
     DIR* dir = opendir("/sys/class/udc");
     if (!dir) {
@@ -533,7 +537,7 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
             return;
         }
 
-        if (!WaitForHostReady()) {
+        if (!WaitForHostConfigured()) {
             std::cerr << "[GamepadDevice] Host never configured HID interface; disconnecting" << std::endl;
             UnbindUDC();
             input.Grab(false);
@@ -824,34 +828,20 @@ bool GamepadDevice::WriteReportBlocking(const std::array<uint8_t, 13>& report) {
     return false;
 }
 
-bool GamepadDevice::WaitForHostReady(int timeout_ms) {
-    if (fd < 0) {
-        return false;
-    }
-
-    int waited = 0;
-    while (waited < timeout_ms && running) {
-        int window = std::min(25, timeout_ms - waited);
-        pollfd p{};
-        p.fd = fd;
-        p.events = POLLOUT;
-        p.revents = 0;
-        int ret = poll(&p, 1, window);
-        if (ret > 0) {
-            if (p.revents & (POLLERR | POLLHUP | POLLNVAL)) {
-                return false;
+bool GamepadDevice::WaitForHostConfigured(int timeout_ms) {
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    const std::chrono::milliseconds step(10);
+    while (running && std::chrono::steady_clock::now() < deadline) {
+        std::string state = ReadTrimmedFile(GadgetStatePath());
+        if (!state.empty()) {
+            for (char& c : state) {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             }
-            if (p.revents & POLLOUT) {
+            if (state == "configured") {
                 return true;
             }
-        } else if (ret == 0) {
-            waited += window;
-            continue;
-        } else if (errno == EINTR) {
-            continue;
-        } else {
-            return false;
         }
+        std::this_thread::sleep_for(step);
     }
     return false;
 }
