@@ -58,7 +58,7 @@ bool DeviceSupportsMouse(int fd) {
 }
 }
 
-Input::Input() : prev_toggle(false) {
+Input::Input() : prev_toggle(false), resync_pending(true) {
     memset(keys, 0, sizeof(keys));
     memset(key_counts, 0, sizeof(key_counts));
     last_scan = std::chrono::steady_clock::time_point::min();
@@ -80,6 +80,9 @@ bool Input::DiscoverKeyboard(const std::string& device_path) {
     if (!device_path.empty() && !FindDevice(device_path)) {
         std::cerr << "Failed to open keyboard device: " << device_path << std::endl;
         return false;
+    }
+    if (!device_path.empty()) {
+        MarkResyncNeeded();
     }
     return true;
 }
@@ -263,7 +266,11 @@ void Input::RefreshDevices() {
         DeviceHandle* existing = FindDevice(path);
         if (existing) {
             if (WantsKeyboardAuto() && !existing->keyboard_capable) {
-                existing->keyboard_capable = DeviceSupportsKeyboard(existing->fd);
+                bool now_keyboard = DeviceSupportsKeyboard(existing->fd);
+                if (now_keyboard) {
+                    existing->keyboard_capable = true;
+                    MarkResyncNeeded();
+                }
             }
             if (WantsMouseAuto() && !existing->mouse_capable) {
                 existing->mouse_capable = DeviceSupportsMouse(existing->fd);
@@ -294,6 +301,9 @@ void Input::RefreshDevices() {
         }
 
         devices.push_back(std::move(handle));
+        if (devices.back().keyboard_capable) {
+            MarkResyncNeeded();
+        }
     }
     closedir(dir);
 }
@@ -306,7 +316,10 @@ void Input::EnsureManualDevice(const std::string& path, bool want_keyboard, bool
     DeviceHandle* existing = FindDevice(path);
     if (existing) {
         existing->manual = true;
-        if (want_keyboard) existing->keyboard_capable = true;
+        if (want_keyboard && !existing->keyboard_capable) {
+            existing->keyboard_capable = true;
+            MarkResyncNeeded();
+        }
         if (want_mouse) existing->mouse_capable = true;
         return;
     }
@@ -328,6 +341,9 @@ void Input::EnsureManualDevice(const std::string& path, bool want_keyboard, bool
     handle.mouse_capable = want_mouse;
     handle.last_active = std::chrono::steady_clock::now();
     devices.push_back(std::move(handle));
+    if (want_keyboard) {
+        MarkResyncNeeded();
+    }
 }
 
 Input::DeviceHandle* Input::FindDevice(const std::string& path) {
@@ -437,6 +453,10 @@ void Input::Grab(bool enable) {
 }
 
 void Input::ResyncKeyStates() {
+    if (!resync_pending) {
+        return;
+    }
+
     memset(keys, 0, sizeof(keys));
     memset(key_counts, 0, sizeof(key_counts));
 
@@ -471,18 +491,12 @@ void Input::ResyncKeyStates() {
         keys[code] = key_counts[code] > 0;
     }
 
-    prev_toggle = (keys[KEY_LEFTCTRL] || keys[KEY_RIGHTCTRL]) && keys[KEY_M];
+    prev_toggle = false;
+    resync_pending = false;
 }
 
-void Input::ResetState() {
-    memset(keys, 0, sizeof(keys));
-    memset(key_counts, 0, sizeof(key_counts));
-    for (auto& dev : devices) {
-        if (!dev.key_shadow.empty()) {
-            std::fill(dev.key_shadow.begin(), dev.key_shadow.end(), 0);
-        }
-    }
-    prev_toggle = false;
+void Input::MarkResyncNeeded() {
+    resync_pending = true;
 }
 
 bool Input::IsKeyPressed(int keycode) const {

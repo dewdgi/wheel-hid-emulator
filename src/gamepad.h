@@ -67,7 +67,7 @@ public:
     void UpdateButtons(const Input& input);
     void UpdateDPad(const Input& input);
     void SendState();
-    void SendNeutral();
+    void SendNeutral(bool reset_ffb = true);
     void ApplyInputSnapshot(const Input& input);
 
 private:

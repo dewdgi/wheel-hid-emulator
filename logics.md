@@ -33,8 +33,8 @@ This document matches the current gadget-only implementation. Every subsystem de
 - Auto-detects keyboard/mouse devices unless both overrides are specified, in which case only the pinned fds stay open.
 - Implements `WaitForEvents(timeout_ms)` via `poll`, so the main loop sleeps until activity or timeout.
 - Aggregates key presses into `keys[KEY_MAX]`, accumulates mouse X delta, and exposes `IsKeyPressed(keycode)` lookups.
-- `Grab(bool)` issues `EVIOCGRAB` for exclusive access while the emulator is enabled. `ResetState()` wipes every aggregated key counter whenever we ungrab so no stale presses leak into the next session.
-- `ResyncKeyStates()` runs immediately after we re-grab so the aggregated key array reflects what’s physically held (Ctrl+M can be hammered without waiting for key-up events, and any pedal you held during the toggle comes back instantly).
+- `Grab(bool)` issues `EVIOCGRAB` for exclusive access while the emulator is enabled, but key state continues to be tracked even while ungrabbed so toggling never discards the user’s current pedal position.
+- `ResyncKeyStates()` only runs when a new keyboard device appears (or right before we re-enable) so the aggregated key array reflects what’s physically held without doing unnecessary work on every toggle.
 
 ### `src/gamepad.cpp`
 - Holds the canonical wheel state behind `state_mutex`: steering, user steering, FFB offset/velocity, three pedals, D-pad axes, 26 button bits, enable flag, and FFB parameters.
@@ -42,7 +42,9 @@ This document matches the current gadget-only implementation. Every subsystem de
 - `USBGadgetPollingThread()` is the only writer to `/dev/hidg0`. It waits on `state_cv`, builds a 13-byte report with `BuildHIDReport()`, then calls `WriteHIDBlocking()` until the transfer completes. A short "warmup" burst (25 frames) is pushed any time we re-enable so games that are sitting in input menus still see fresh data even if nothing is moving yet.
 - `USBGadgetOutputThread()` polls for OUTPUT data, reassembles 7-byte packets, and hands them to `ParseFFBCommand()` for decoding.
 - `FFBUpdateThread()` runs at ~125 Hz: shapes torque, blends autocenter springs, applies gain, feeds the damped spring model, and nudges steering by applying `ffb_offset` before clamping to ±32768.
-- `ToggleEnabled()` flips the `enabled` flag under the mutex, grabs/ungrabs input, zeroes the HID state, reapplies whatever pedals/buttons are currently held (snapshot), schedules the warmup burst, and logs the new mode so the host always sees a current frame when control changes.
+- `ToggleEnabled()` flips the `enabled` flag under the mutex, grabs/ungrabs input, reapplies whatever pedals/buttons are currently held (snapshot), schedules the warmup burst, and logs the new mode so the host always sees a current frame when control changes.
+- `SendNeutral(reset_ffb)` injects a neutral frame and, unless we explicitly ask for a reset, preserves the force-feedback state so quickly toggling Ctrl+M no longer clears road feel.
+- Warmup burst: when we re-enable, `GamepadDevice` emits a few consecutive neutral frames followed by the freshly captured snapshot so ACC never sees half-pressed pedals or missing axes after a toggle.
 
 ### `src/config.cpp`
 - Reads `/etc/wheel-emulator.conf`. If missing, writes a documented default that matches the code (including the KEY_ENTER button 26 binding and clutch axis description).

@@ -38,8 +38,8 @@ public:
     // Rebuild aggregated key state by querying each keyboard device directly
     void ResyncKeyStates();
 
-    // Clear aggregated key state for every tracked key/device
-    void ResetState();
+    // Mark that a resync is needed (e.g., new keyboard device discovered)
+    void MarkResyncNeeded();
 
     // Check if a key is currently pressed
     bool IsKeyPressed(int keycode) const;
@@ -63,6 +63,7 @@ private:
     std::chrono::steady_clock::time_point last_input_activity;
     std::chrono::steady_clock::time_point last_keyboard_error;
     std::chrono::steady_clock::time_point last_mouse_error;
+    bool resync_pending;
     bool keys[KEY_MAX];
     int key_counts[KEY_MAX];
     bool prev_toggle;

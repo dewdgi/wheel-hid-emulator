@@ -119,6 +119,7 @@ void GamepadDevice::ShutdownThreads() {
     ffb_running = false;
     gadget_running = false;
     gadget_output_running = false;
+        warmup_frames.store(0, std::memory_order_relaxed);
 
     state_cv.notify_all();
     ffb_cv.notify_all();
@@ -156,7 +157,7 @@ bool GamepadDevice::Create() {
     ffb_running = true;
     ffb_thread = std::thread(&GamepadDevice::FFBUpdateThread, this);
 
-    SendNeutral();
+    SendNeutral(true);
     return true;
 }
 
@@ -286,14 +287,14 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
 
     input.Grab(enable);
     if (enable) {
+        input.MarkResyncNeeded();
         input.ResyncKeyStates();
-        SendNeutral();
+        SendNeutral(false);
         ApplyInputSnapshot(input);
         warmup_frames.store(25, std::memory_order_release);
     } else {
-        input.ResetState();
         warmup_frames.store(0, std::memory_order_release);
-        SendNeutral();
+        SendNeutral(true);
     }
     SendState();
     std::cout << (enable ? "Emulation ENABLED" : "Emulation DISABLED") << std::endl;
@@ -439,13 +440,15 @@ void GamepadDevice::SendState() {
     NotifyStateChanged();
 }
 
-void GamepadDevice::SendNeutral() {
+void GamepadDevice::SendNeutral(bool reset_ffb) {
     {
         std::lock_guard<std::mutex> lock(state_mutex);
         steering = 0.0f;
         user_steering = 0.0f;
-        ffb_offset = 0.0f;
-        ffb_velocity = 0.0f;
+        if (reset_ffb) {
+            ffb_offset = 0.0f;
+            ffb_velocity = 0.0f;
+        }
         throttle = 0.0f;
         brake = 0.0f;
         clutch = 0.0f;
