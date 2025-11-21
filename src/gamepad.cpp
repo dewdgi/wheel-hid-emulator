@@ -537,7 +537,7 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
             return;
         }
 
-        if (!WaitForHostConfigured()) {
+        if (!WaitForHostReady()) {
             std::cerr << "[GamepadDevice] Host never configured HID interface; disconnecting" << std::endl;
             UnbindUDC();
             input.Grab(false);
@@ -828,20 +828,46 @@ bool GamepadDevice::WriteReportBlocking(const std::array<uint8_t, 13>& report) {
     return false;
 }
 
-bool GamepadDevice::WaitForHostConfigured(int timeout_ms) {
+bool GamepadDevice::WaitForHostReady(int timeout_ms) {
     auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     const std::chrono::milliseconds step(10);
+    std::string last_state;
+
     while (running && std::chrono::steady_clock::now() < deadline) {
         std::string state = ReadTrimmedFile(GadgetStatePath());
         if (!state.empty()) {
+            last_state = state;
             for (char& c : state) {
                 c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             }
-            if (state == "configured") {
+            if (state == "configured" || state == "configured+" || state == "configured+host") {
                 return true;
             }
         }
-        std::this_thread::sleep_for(step);
+
+        if (fd >= 0) {
+            pollfd p{};
+            p.fd = fd;
+            p.events = POLLOUT;
+            p.revents = 0;
+            int ret = poll(&p, 1, step.count());
+            if (ret > 0) {
+                if (p.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+                    break;
+                }
+                if (p.revents & POLLOUT) {
+                    return true;
+                }
+            } else if (ret < 0 && errno != EINTR) {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    if (!last_state.empty()) {
+        std::cerr << "[GamepadDevice] Gadget state before timeout: " << last_state << std::endl;
     }
     return false;
 }
