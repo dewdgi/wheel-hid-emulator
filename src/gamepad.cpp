@@ -284,9 +284,6 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
     }
 
     input.Grab(enable);
-    if (!enable) {
-        input.ResetState();
-    }
     SendNeutral();
     std::cout << (enable ? "Emulation ENABLED" : "Emulation DISABLED") << std::endl;
 }

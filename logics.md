@@ -33,7 +33,7 @@ This document matches the current gadget-only implementation. Every subsystem de
 - Auto-detects keyboard/mouse devices unless both overrides are specified, in which case only the pinned fds stay open.
 - Implements `WaitForEvents(timeout_ms)` via `poll`, so the main loop sleeps until activity or timeout.
 - Aggregates key presses into `keys[KEY_MAX]`, accumulates mouse X delta, and exposes `IsKeyPressed(keycode)` lookups.
-- `Grab(bool)` issues `EVIOCGRAB` for exclusive access while the emulator is enabled and resets all key counters when disabled to avoid stuck inputs.
+- `Grab(bool)` issues `EVIOCGRAB` for exclusive access while the emulator is enabled. Keyboard state stays intact across toggles so modifier chords survive rapid Ctrl+M presses, and per-device `key_shadow` data is automatically released if a device disconnects.
 
 ### `src/gamepad.cpp`
 - Holds the canonical wheel state behind `state_mutex`: steering, user steering, FFB offset/velocity, three pedals, D-pad axes, 26 button bits, enable flag, and FFB parameters.
@@ -130,7 +130,7 @@ All bindings are hardcoded in `GamepadDevice::UpdateButtons`. The README table m
 
 ## Lifecycle Guarantees
 
-- **Enable/Disable:** Ctrl+M grabs/ungrabs devices via `Input::Grab`, resets aggregated key state, sends a neutral HID frame, and logs the new mode. Grabbing occurs outside the state mutex to avoid deadlocks if `EVIOCGRAB` blocks.
+- **Enable/Disable:** Ctrl+M grabs/ungrabs devices via `Input::Grab`, sends a neutral HID frame, and logs the new mode. Keyboard state is preserved so you can keep holding modifiers (e.g., Ctrl) while toggling repeatedly. Grabbing occurs outside the state mutex to avoid deadlocks if `EVIOCGRAB` blocks.
 - **Signal Safety:** All blocking syscalls in threads treat `EINTR` as retryable. The SIGINT handler only toggles `running` and writes a message, so shutdown is safe even if the gadget threads are mid-transfer.
 - **Hotplug Safety:** Each device’s `key_shadow` is flushed when the fd disconnects, releasing any held buttons so games never see stuck inputs after a keyboard unplug.
 
@@ -138,9 +138,9 @@ All bindings are hardcoded in `GamepadDevice::UpdateButtons`. The README table m
 
 ## Troubleshooting Hooks
 
-- **`cleanup_gadget.sh`** removes the ConfigFS gadget if a crash leaves it behind.
+- **ConfigFS cleanup:** rerunning the emulator always tears down/rebuilds the gadget tree (`DestroyUSBGadget()` mirrors the setup routine). If a crash leaves artifacts behind, manually echo an empty string into `/sys/kernel/config/usb_gadget/g29wheel/UDC` and remove the directories just like the code’s cleanup routine.
 - `GamepadDevice::Create()` prints detailed guidance (ConfigFS mount, libcomposite, dummy_hcd, UDC availability) for the only supported backend: USB gadget.
-- `lsusb` should show `046d:c24f` whenever the gadget is enabled. If not, re-run the cleanup script or ensure a hardware/virtual UDC is loaded.
+- `lsusb` should show `046d:c24f` whenever the gadget is enabled. If not, repeat the ConfigFS cleanup sequence above or ensure a hardware/virtual UDC is loaded.
 
 ---
 

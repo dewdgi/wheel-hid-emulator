@@ -35,7 +35,7 @@ sudo ./wheel-emulator
 ```
 
 Runtime controls:
-- **Ctrl+M** – toggle emulation on/off (grabs or releases keyboard/mouse)
+- **Ctrl+M** – toggle emulation on/off (grabs or releases keyboard/mouse). The combo is edge-triggered, so you can keep holding Ctrl and tap M rapidly without missing a transition.
 - **Ctrl+C** – exit cleanly, tearing down the ConfigFS gadget
 
 ## Controls & Mapping

@@ -35,9 +35,6 @@ public:
     // Grab/ungrab devices for exclusive access
     void Grab(bool enable);
 
-    // Clear aggregated key state (used when toggling grabbing)
-    void ResetState();
-    
     // Check if a key is currently pressed
     bool IsKeyPressed(int keycode) const;
 
