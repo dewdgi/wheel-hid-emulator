@@ -1,5 +1,8 @@
 # Wheel HID Emulator
 
+# Demonstration video
+[![Watch the demo](https://img.youtube.com/vi/8nfdKWtkmtE/0.jpg)](https://www.youtube.com/watch?v=8nfdKWtkmtE)
+
 Turn a keyboard and mouse into a Logitech G29 racing wheel on Linux. The emulator exposes a real USB HID gadget so your system instantly recognizes it as a wheel without extra drivers. If you want to dive into the internals, check [`logics.md`](logics.md).
 
 ## Before You Start
