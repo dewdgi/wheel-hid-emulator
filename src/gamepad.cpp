@@ -108,12 +108,15 @@ std::string ReadTrimmedFile(const std::string& path) {
 }
 
 bool WriteStringToFile(const std::string& path, const std::string& value) {
-    std::ofstream out(path);
-    if (!out) {
+    int fd = open(path.c_str(), O_WRONLY | O_TRUNC);
+    if (fd < 0) {
         return false;
     }
-    out << value;
-    return static_cast<bool>(out);
+    std::string payload = value;
+    payload.push_back('\n');
+    ssize_t written = write(fd, payload.data(), payload.size());
+    close(fd);
+    return written == static_cast<ssize_t>(payload.size());
 }
 
 }  // namespace
@@ -340,8 +343,10 @@ bool GamepadDevice::BindUDC() {
         return true;
     }
     if (udc_name.empty()) {
-        udc_name = ReadTrimmedFile(GadgetUDCPath());
-        if (udc_name.empty()) {
+        std::string current = ReadTrimmedFile(GadgetUDCPath());
+        if (!current.empty()) {
+            udc_name = current;
+        } else {
             udc_name = DetectFirstUDC();
         }
         if (udc_name.empty()) {
@@ -354,6 +359,7 @@ bool GamepadDevice::BindUDC() {
         return false;
     }
     udc_bound = true;
+    std::cout << "[GamepadDevice] Bound UDC '" << udc_name << "'" << std::endl;
     return true;
 }
 
@@ -367,6 +373,7 @@ bool GamepadDevice::UnbindUDC() {
         return false;
     }
     udc_bound = false;
+    std::cout << "[GamepadDevice] Unbound UDC" << std::endl;
     return true;
 }
 
@@ -464,7 +471,29 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
         warmup_frames.store(0, std::memory_order_release);
         state_dirty.store(false, std::memory_order_release);
 
+        std::array<uint8_t, 13> neutral_report;
+        std::array<uint8_t, 13> snapshot_report;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex);
+            ApplyNeutralLocked(false);
+            neutral_report = BuildHIDReportLocked();
+            ApplySnapshotLocked(snapshot);
+            snapshot_report = BuildHIDReportLocked();
+        }
+
         if (!BindUDC()) {
+            {
+                std::lock_guard<std::mutex> lock(state_mutex);
+                ApplyNeutralLocked(true);
+                enabled = false;
+            }
+            input.Grab(false);
+            return;
+        }
+
+        if (!WriteReportBlocking(neutral_report) || !WriteReportBlocking(snapshot_report)) {
+            std::cerr << "[GamepadDevice] Failed to prime HID reports; disconnecting" << std::endl;
+            UnbindUDC();
             input.Grab(false);
             {
                 std::lock_guard<std::mutex> lock(state_mutex);
@@ -472,22 +501,6 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
             }
             return;
         }
-
-        std::array<uint8_t, 13> neutral_report;
-        {
-            std::lock_guard<std::mutex> lock(state_mutex);
-            ApplyNeutralLocked(false);
-            neutral_report = BuildHIDReportLocked();
-        }
-        WriteReportBlocking(neutral_report);
-
-        std::array<uint8_t, 13> snapshot_report;
-        {
-            std::lock_guard<std::mutex> lock(state_mutex);
-            ApplySnapshotLocked(snapshot);
-            snapshot_report = BuildHIDReportLocked();
-        }
-        WriteReportBlocking(snapshot_report);
 
         output_enabled.store(true, std::memory_order_release);
         warmup_frames.store(25, std::memory_order_release);
@@ -503,7 +516,9 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
             ApplyNeutralLocked(true);
             neutral_report = BuildHIDReportLocked();
         }
-        WriteReportBlocking(neutral_report);
+        if (!WriteReportBlocking(neutral_report)) {
+            std::cerr << "[GamepadDevice] Failed to send neutral frame while disabling" << std::endl;
+        }
         input.Grab(false);
         UnbindUDC();
     }
