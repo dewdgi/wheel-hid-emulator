@@ -92,8 +92,6 @@ private:
     bool BindUDC();
     bool UnbindUDC();
     std::string GadgetUDCPath() const;
-    std::string GadgetStatePath() const;
-    bool WaitForHostReady(int timeout_ms = 2000);
     std::string DetectFirstUDC() const;
     void EnsureGadgetThreadsStarted();
     void StopGadgetThreads();

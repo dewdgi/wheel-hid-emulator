@@ -310,10 +310,6 @@ std::string GamepadDevice::GadgetUDCPath() const {
     return std::string("/sys/kernel/config/usb_gadget/") + kGadgetName + "/UDC";
 }
 
-std::string GamepadDevice::GadgetStatePath() const {
-    return std::string("/sys/kernel/config/usb_gadget/") + kGadgetName + "/state";
-}
-
 std::string GamepadDevice::DetectFirstUDC() const {
     DIR* dir = opendir("/sys/class/udc");
     if (!dir) {
@@ -534,17 +530,6 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
                 enabled = false;
             }
             input.Grab(false);
-            return;
-        }
-
-        if (!WaitForHostReady()) {
-            std::cerr << "[GamepadDevice] Host never configured HID interface; disconnecting" << std::endl;
-            UnbindUDC();
-            input.Grab(false);
-            {
-                std::lock_guard<std::mutex> lock(state_mutex);
-                enabled = false;
-            }
             return;
         }
 
@@ -801,22 +786,42 @@ bool GamepadDevice::WriteHIDBlocking(const uint8_t* data, size_t size) {
 }
 
 bool GamepadDevice::WriteReportBlocking(const std::array<uint8_t, 13>& report) {
-    constexpr int kMaxAttempts = 3;
-    for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+    constexpr auto kMaxWait = std::chrono::milliseconds(2000);
+    auto deadline = std::chrono::steady_clock::now() + kMaxWait;
+    int attempt = 0;
+
+    while (running && std::chrono::steady_clock::now() < deadline) {
         if (fd >= 0 && WriteHIDBlocking(report.data(), report.size())) {
             return true;
         }
-        std::cerr << "[GamepadDevice] Failed to write HID report (attempt " << (attempt + 1)
-                  << ")" << std::endl;
+
+        int err = errno;
+        ++attempt;
+        std::cerr << "[GamepadDevice] Failed to write HID report (attempt " << attempt
+                  << ", errno=" << err << " " << strerror(err) << ")" << std::endl;
+
         if (fd >= 0) {
             close(fd);
             fd = -1;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        fd = open(kHidDevice, O_RDWR);
-        if (fd < 0) {
+
+        if (!running) {
             break;
         }
+
+        // Host not ready yet; allow some time before retrying.
+        if (err == EPIPE || err == ENODEV || err == ESHUTDOWN) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(15));
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+
+        fd = open(kHidDevice, O_RDWR);
+        if (fd < 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            continue;
+        }
+
         if (gadget_running.load(std::memory_order_relaxed) ||
             gadget_output_running.load(std::memory_order_relaxed)) {
             int flags = fcntl(fd, F_GETFL, 0);
@@ -828,49 +833,6 @@ bool GamepadDevice::WriteReportBlocking(const std::array<uint8_t, 13>& report) {
     return false;
 }
 
-bool GamepadDevice::WaitForHostReady(int timeout_ms) {
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-    const std::chrono::milliseconds step(10);
-    std::string last_state;
-
-    while (running && std::chrono::steady_clock::now() < deadline) {
-        std::string state = ReadTrimmedFile(GadgetStatePath());
-        if (!state.empty()) {
-            last_state = state;
-            for (char& c : state) {
-                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-            }
-            if (state == "configured" || state == "configured+" || state == "configured+host") {
-                return true;
-            }
-        }
-
-        if (fd >= 0) {
-            pollfd p{};
-            p.fd = fd;
-            p.events = POLLOUT;
-            p.revents = 0;
-            int ret = poll(&p, 1, step.count());
-            if (ret > 0) {
-                if (p.revents & (POLLERR | POLLHUP | POLLNVAL)) {
-                    break;
-                }
-                if (p.revents & POLLOUT) {
-                    return true;
-                }
-            } else if (ret < 0 && errno != EINTR) {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
-
-    if (!last_state.empty()) {
-        std::cerr << "[GamepadDevice] Gadget state before timeout: " << last_state << std::endl;
-    }
-    return false;
-}
 
 void GamepadDevice::USBGadgetPollingThread() {
     if (fd < 0) {
