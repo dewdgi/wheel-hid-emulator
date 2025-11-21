@@ -34,7 +34,7 @@ This document matches the current gadget-only implementation. Every subsystem de
 - Implements `WaitForEvents(timeout_ms)` via `poll`, so the main loop sleeps until activity or timeout.
 - Aggregates key presses into `keys[KEY_MAX]`, accumulates mouse X delta, and exposes `IsKeyPressed(keycode)` lookups.
 - `Grab(bool)` issues `EVIOCGRAB` for exclusive access while the emulator is enabled, but key state continues to be tracked even while ungrabbed so toggling never discards the user’s current pedal position.
-- `ResyncKeyStates()` only runs when a new keyboard device appears (or right before we re-enable) so the aggregated key array reflects what’s physically held without doing unnecessary work on every toggle.
+- `ResyncKeyStates()` only does real work when `resync_pending` is true (i.e., a new keyboard was discovered). `GamepadDevice::SetEnabled(true)` still calls it so pending resyncs happen immediately, but steady-state toggles skip the expensive EVIOCGKEY sweep entirely.
 
 ### `src/gamepad.cpp`
 - Holds the canonical wheel state behind `state_mutex`: steering, user steering, FFB offset/velocity, three pedals, D-pad axes, 26 button bits, enable flag, and FFB parameters.
@@ -42,7 +42,7 @@ This document matches the current gadget-only implementation. Every subsystem de
 - `USBGadgetPollingThread()` is the only writer to `/dev/hidg0`. It waits on `state_cv`, builds a 13-byte report with `BuildHIDReport()`, then calls `WriteHIDBlocking()` until the transfer completes. A short "warmup" burst (25 frames) is pushed any time we re-enable so games that are sitting in input menus still see fresh data even if nothing is moving yet.
 - `USBGadgetOutputThread()` polls for OUTPUT data, reassembles 7-byte packets, and hands them to `ParseFFBCommand()` for decoding.
 - `FFBUpdateThread()` runs at ~125 Hz: shapes torque, blends autocenter springs, applies gain, feeds the damped spring model, and nudges steering by applying `ffb_offset` before clamping to ±32768.
-- `ToggleEnabled()` flips the `enabled` flag under the mutex, grabs/ungrabs input, reapplies whatever pedals/buttons are currently held (snapshot), schedules the warmup burst, and logs the new mode so the host always sees a current frame when control changes.
+- `ToggleEnabled()` flips the `enabled` flag under the mutex, grabs/ungrabs input, calls `ResyncKeyStates()` (which is a no-op unless a new device arrived), reapplies whatever pedals/buttons are currently held (snapshot), schedules the warmup burst, and logs the new mode so the host always sees a current frame when control changes.
 - `SendNeutral(reset_ffb)` injects a neutral frame and, unless we explicitly ask for a reset, preserves the force-feedback state so quickly toggling Ctrl+M no longer clears road feel.
 - Warmup burst: when we re-enable, `GamepadDevice` emits a few consecutive neutral frames followed by the freshly captured snapshot so ACC never sees half-pressed pedals or missing axes after a toggle.
 
@@ -133,7 +133,7 @@ All bindings are hardcoded in `GamepadDevice::UpdateButtons`. The README table m
 
 ## Lifecycle Guarantees
 
-- **Enable/Disable:** Ctrl+M grabs/ungrabs devices via `Input::Grab`, resets the aggregated key state when releasing, resyncs it with actual hardware when re-grabbing, reapplies those held controls to the HID state, runs a short warmup burst, and logs the new mode. This keeps modifiers responsive even if you hold Ctrl while toggling and guarantees games in input menus see fresh pedal data. Grabbing occurs outside the state mutex to avoid deadlocks if `EVIOCGRAB` blocks.
+- **Enable/Disable:** Ctrl+M grabs/ungrabs devices via `Input::Grab`, keeps the aggregated key state alive even while ungrabbed, only resyncs against hardware when `resync_pending` is set (new device or manual override change), reapplies those held controls to the HID state, runs a short warmup burst, and logs the new mode. This keeps modifiers responsive even if you hold Ctrl while toggling, avoids redundant ioctl spam during rapid toggles (100 Hz+ is fine), and guarantees games in input menus see fresh pedal data. Grabbing occurs outside the state mutex to avoid deadlocks if `EVIOCGRAB` blocks.
 - **Signal Safety:** All blocking syscalls in threads treat `EINTR` as retryable. The SIGINT handler only toggles `running` and writes a message, so shutdown is safe even if the gadget threads are mid-transfer.
 - **Hotplug Safety:** Each device’s `key_shadow` is flushed when the fd disconnects, releasing any held buttons so games never see stuck inputs after a keyboard unplug.
 

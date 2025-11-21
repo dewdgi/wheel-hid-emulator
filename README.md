@@ -8,6 +8,7 @@ Transform a keyboard and mouse into a force-feedback Logitech G29 Racing Wheel o
 - Force feedback physics loop (125 Hz) with Logitech-compatible OUTPUT report parsing.
 - Mouse X → steering, keyboard keys → pedals, clutch, 26 buttons, and D-pad.
 - Hotplug-aware input stack with Ctrl+M grab/ungrab toggle and Ctrl+C shutdown.
+- Snapshot + warmup path guarantees pedals/buttons return instantly after a toggle, even if you flip Ctrl+M 100× per second.
 - Configurable steering sensitivity and FFB gain via `/etc/wheel-emulator.conf`.
 
 ## Requirements
@@ -37,6 +38,8 @@ sudo ./wheel-emulator
 Runtime controls:
 - **Ctrl+M** – toggle emulation on/off (grabs or releases keyboard/mouse). The combo is edge-triggered, so you can keep holding Ctrl and tap M rapidly without missing a transition.
 - **Ctrl+C** – exit cleanly, tearing down the ConfigFS gadget
+
+The toggle path caches device handles, skips redundant EVIOCGRAB calls, and only re-syncs key state when a new keyboard appears. That means even extremely fast enable/disable cycles keep the pedal snapshot aligned with whatever you’re holding.
 
 ## Controls & Mapping
 
@@ -82,6 +85,15 @@ Runtime controls:
 | Trigger Happy 12      | Enter | Extra bind |
 
 Remap these inside your game just like a real Logitech wheel.
+
+## Enable/Disable Flow
+
+1. Press **Ctrl+M**.
+2. Input devices are grabbed or released via `EVIOCGRAB`, but key state tracking keeps running so your current pedal position is never lost.
+3. If a new keyboard was discovered, `ResyncKeyStates()` snapshots its hardware state; otherwise this step is skipped for speed.
+4. The current key snapshot is reapplied to the HID state, then the gadget writer pushes ~25 “warmup” frames (neutral + snapshot) so any game sitting in an input menu immediately sees accurate pedals/axes.
+
+This pipeline makes rapid toggles cheap (tested at 100 Hz) while still guaranteeing the host receives a clean frame whenever control changes.
 
 ## Configuration (`/etc/wheel-emulator.conf`)
 
