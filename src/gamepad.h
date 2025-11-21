@@ -68,6 +68,7 @@ public:
     void UpdateDPad(const Input& input);
     void SendState();
     void SendNeutral();
+    void ApplyInputSnapshot(const Input& input);
 
 private:
     void NotifyStateChanged();
@@ -94,6 +95,7 @@ private:
     std::thread ffb_thread;
     std::atomic<bool> ffb_running;
     std::atomic<bool> state_dirty;
+    std::atomic<int> warmup_frames;
     std::mutex state_mutex;
     std::condition_variable state_cv;
     std::condition_variable ffb_cv;

@@ -100,13 +100,14 @@ void GamepadDevice::NotifyAllShutdownCVs() {
 }
 
 GamepadDevice::GamepadDevice()
-    : fd(-1), gadget_running(false), gadget_output_running(false),
-      enabled(false), steering(0.0f), user_steering(0.0f), ffb_offset(0.0f),
+        : fd(-1), gadget_running(false), gadget_output_running(false),
+            enabled(false), steering(0.0f), user_steering(0.0f), ffb_offset(0.0f),
       ffb_velocity(0.0f), ffb_gain(1.0f), throttle(0.0f), brake(0.0f),
       clutch(0.0f), dpad_x(0), dpad_y(0), ffb_force(0),
-      ffb_autocenter(0), gadget_output_pending_len(0) {
+            ffb_autocenter(0), gadget_output_pending_len(0) {
     ffb_running = false;
     state_dirty = false;
+        warmup_frames.store(0, std::memory_order_relaxed);
     button_states.fill(0);
 }
 
@@ -286,11 +287,15 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
     input.Grab(enable);
     if (enable) {
         input.ResyncKeyStates();
+        SendNeutral();
+        ApplyInputSnapshot(input);
+        warmup_frames.store(25, std::memory_order_release);
     } else {
         input.ResetState();
-        input.ResyncKeyStates();
+        warmup_frames.store(0, std::memory_order_release);
+        SendNeutral();
     }
-    SendNeutral();
+    SendState();
     std::cout << (enable ? "Emulation ENABLED" : "Emulation DISABLED") << std::endl;
 }
 
@@ -454,6 +459,14 @@ void GamepadDevice::SendNeutral() {
     }
 }
 
+void GamepadDevice::ApplyInputSnapshot(const Input& input) {
+    UpdateThrottle(input.IsKeyPressed(KEY_W), 0.0f);
+    UpdateBrake(input.IsKeyPressed(KEY_S), 0.0f);
+    UpdateClutch(input.IsKeyPressed(KEY_A), 0.0f);
+    UpdateButtons(input);
+    UpdateDPad(input);
+}
+
 void GamepadDevice::NotifyStateChanged() {
     state_dirty.store(true, std::memory_order_release);
     state_cv.notify_all();
@@ -555,14 +568,22 @@ void GamepadDevice::USBGadgetPollingThread() {
     std::unique_lock<std::mutex> lock(state_mutex);
     while (gadget_running && running) {
         state_cv.wait_for(lock, std::chrono::milliseconds(2), [&] {
-            return !gadget_running || !running || state_dirty.load(std::memory_order_acquire);
+            return !gadget_running || !running ||
+                   state_dirty.load(std::memory_order_acquire) ||
+                   warmup_frames.load(std::memory_order_acquire) > 0;
         });
         if (!gadget_running || !running) {
             break;
         }
         bool should_send = state_dirty.exchange(false, std::memory_order_acq_rel);
+        bool warmup = false;
+        int pending = warmup_frames.load(std::memory_order_acquire);
+        if (pending > 0) {
+            warmup = true;
+            warmup_frames.fetch_sub(1, std::memory_order_acq_rel);
+        }
         lock.unlock();
-        if (should_send) {
+        if (should_send || warmup) {
             SendGadgetReport();
         }
         lock.lock();

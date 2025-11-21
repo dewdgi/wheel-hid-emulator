@@ -397,6 +397,7 @@ bool Input::CheckToggle() {
 void Input::Grab(bool enable) {
     RefreshDevices();
     int grab = enable ? 1 : 0;
+    int changed = 0;
     for (auto& dev : devices) {
         if (dev.fd < 0) {
             continue;
@@ -420,11 +421,18 @@ void Input::Grab(bool enable) {
                 dev.grabbed = false;
             }
         } else if (enable) {
-            std::cout << "Grabbed " << dev.path << std::endl;
             dev.grabbed = true;
+            changed++;
         } else {
             dev.grabbed = false;
+            changed++;
         }
+    }
+
+    if (changed > 0) {
+        std::cout << (enable ? "Grabbed " : "Released ")
+                  << changed << " device" << (changed == 1 ? "" : "s")
+                  << std::endl;
     }
 }
 
