@@ -66,7 +66,6 @@ public:
     void SendNeutral(bool reset_ffb = true);
     void ApplyCurrentInput(const Input& input);
     void ApplySnapshot(const ControlSnapshot& snapshot);
-    void FlushStateBlocking();
 
 private:
     void NotifyStateChanged();
@@ -74,6 +73,7 @@ private:
     void DestroyUSBGadget();
     void SendGadgetReport();
     std::array<uint8_t, 13> BuildHIDReport();
+    std::array<uint8_t, 13> BuildHIDReportLocked() const;
     void USBGadgetPollingThread();
     void USBGadgetOutputThread();
     void ReadGadgetOutput();
@@ -87,6 +87,7 @@ private:
     ControlSnapshot CaptureSnapshot(const Input& input) const;
     uint32_t BuildButtonBitsLocked() const;
     bool WriteHIDBlocking(const uint8_t* data, size_t size);
+    bool WriteReportBlocking(const std::array<uint8_t, 13>& report);
 
     int fd;
     std::thread gadget_thread;
@@ -98,7 +99,6 @@ private:
     std::atomic<bool> state_dirty;
     std::atomic<int> warmup_frames;
     std::atomic<bool> output_enabled;
-    std::atomic<uint64_t> frames_sent;
     std::mutex state_mutex;
     std::condition_variable state_cv;
     std::condition_variable ffb_cv;

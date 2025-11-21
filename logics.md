@@ -33,7 +33,7 @@ This document matches the current gadget-only implementation. Every subsystem de
 - Auto-detects keyboard/mouse devices unless both overrides are specified, in which case only the pinned fds stay open.
 - Implements `WaitForEvents(timeout_ms)` via `poll`, so the main loop sleeps until activity or timeout.
 - Aggregates key presses into `keys[KEY_MAX]`, accumulates mouse X delta, and exposes `IsKeyPressed(keycode)` lookups.
-- `Grab(bool)` tracks the desired grab state, refreshes devices the moment we enable, and auto-grabs anything discovered later so new keyboards come under exclusive control immediately. Key state continues to be tracked even while ungrabbed, so toggling never discards the user’s current pedal position.
+- `Grab(bool)` now returns success/failure, validates that both keyboard and mouse are actually grabbed, and immediately releases everything if either class is missing. Discovery still runs while ungrabbed so new devices can be pulled in before the next toggle.
 - `ResyncKeyStates()` only does real work when `resync_pending` is true (i.e., a new keyboard was discovered). `GamepadDevice::SetEnabled(true)` still calls it so pending resyncs happen immediately, but steady-state toggles skip the expensive EVIOCGKEY sweep entirely.
 
 ### `src/gamepad.cpp`
@@ -43,10 +43,10 @@ This document matches the current gadget-only implementation. Every subsystem de
 - `USBGadgetOutputThread()` polls for OUTPUT data, reassembles 7-byte packets, and hands them to `ParseFFBCommand()` for decoding.
 - `FFBUpdateThread()` runs at ~125 Hz: shapes torque, blends autocenter springs, applies gain, feeds the damped spring model, and nudges steering by applying `ffb_offset` before clamping to ±32768.
 - `ToggleEnabled()` flips the `enabled` flag under the mutex, grabs/ungrabs input, calls `ResyncKeyStates()` (which is a no-op unless a new device arrived), reapplies whatever pedals/buttons are currently held via a single snapshot write, schedules the warmup burst, and logs the new mode so the host always sees a current frame when control changes.
-- `ProcessInputFrame()` consumes mouse delta plus the current keyboard snapshot in one lock-protected block, so every axis, button, and hat update lands in the same HID frame; there are no more per-axis NotifyStateChanged calls that could surface half-updated states.
+- `ProcessInputFrame()` consumes mouse delta plus the current keyboard snapshot in one lock-protected block, and it bails out entirely while `output_enabled` is false so we never mutate state mid-handshake.
 - `SendNeutral(reset_ffb)` injects a neutral frame and, unless we explicitly ask for a reset, preserves the force-feedback state so quickly toggling Ctrl+M no longer clears road feel.
-- `FlushStateBlocking()` waits for the HID writer to confirm a frame hit the wire (using a monotonic frame counter) so enable/disable transitions always deliver their neutral frame before output is muted.
-- Warmup burst: when we re-enable, `GamepadDevice` emits a few consecutive neutral frames followed by the freshly captured snapshot so ACC never sees half-pressed pedals or missing axes after a toggle.
+- Enable handshake: `SetEnabled(true)` grabs devices, captures a snapshot, forces `output_enabled=false`, applies a neutral state, writes that HID frame directly, applies the snapshot, writes again, then finally enables asynchronous output and schedules the warmup burst. The host only ever sees whole frames in the right order.
+- Warmup burst: once `output_enabled` flips true, `GamepadDevice` emits a few consecutive frames so ACC never sees half-pressed pedals or missing axes after a toggle.
 - `output_enabled` gates both HID IN and OUT: nothing is transmitted or parsed while disabled, and FFB physics sleeps until the toggle completes, preventing random packets from confusing the host.
 
 ### `src/config.cpp`
@@ -136,7 +136,7 @@ All bindings are hardcoded in `GamepadDevice::UpdateButtons`. The README table m
 
 ## Lifecycle Guarantees
 
-- **Enable/Disable:** Ctrl+M sets `grab_desired`, forces a device refresh, issues `EVIOCGRAB`, keeps the aggregated key state alive even while ungrabbed, only resyncs hardware when `resync_pending` is set, sends and flushes a neutral frame (no other traffic occurs while output is muted), reapplies the freshly captured snapshot inside the same lock, schedules the warmup burst, and logs the mode change. FFB output is ignored until this sequence completes, so games never see half-initialized axes or stray torque packets, even if you toggle hundreds of times per second.
+- **Enable/Disable:** Ctrl+M sets `grab_desired`, forces a device refresh, tries to grab both keyboard and mouse (failure aborts the enable immediately), keeps the aggregated key state alive even while ungrabbed, only resyncs hardware when `resync_pending` is set, writes a neutral HID frame directly while `output_enabled` is false, applies and writes the live snapshot, then enables the asynchronous writer and schedules the warmup burst. FFB output is ignored until this sequence completes, and the main loop continuously monitors for device loss—if the mouse or keyboard ungrabs or disappears, the wheel disables itself and sends a neutral frame right away.
 - **Signal Safety:** All blocking syscalls in threads treat `EINTR` as retryable. The SIGINT handler only toggles `running` and writes a message, so shutdown is safe even if the gadget threads are mid-transfer.
 - **Hotplug Safety:** Each device’s `key_shadow` is flushed when the fd disconnects, releasing any held buttons so games never see stuck inputs after a keyboard unplug.
 

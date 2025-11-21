@@ -420,13 +420,14 @@ bool Input::CheckToggle() {
     return toggled;
 }
 
-void Input::Grab(bool enable) {
+bool Input::Grab(bool enable) {
     grab_desired = enable;
     if (enable) {
         RefreshDevices();
     }
     int grab = enable ? 1 : 0;
     int changed = 0;
+    bool had_error = false;
     for (auto& dev : devices) {
         if (dev.fd < 0) {
             continue;
@@ -443,6 +444,7 @@ void Input::Grab(bool enable) {
         if (ioctl(dev.fd, EVIOCGRAB, grab) < 0) {
             if (enable) {
                 std::cerr << "Failed to grab device " << dev.path << ": " << strerror(errno) << std::endl;
+                had_error = true;
             } else if (errno != EINVAL && errno != ENODEV) {
                 std::cerr << "Failed to release device " << dev.path << ": " << strerror(errno) << std::endl;
             }
@@ -463,6 +465,25 @@ void Input::Grab(bool enable) {
                   << changed << " device" << (changed == 1 ? "" : "s")
                   << std::endl;
     }
+
+    if (!enable) {
+        return true;
+    }
+
+    if (had_error) {
+        Grab(false);
+        return false;
+    }
+
+    if (!AllRequiredGrabbed()) {
+        if (ShouldLogAgain(last_grab_log)) {
+            std::cerr << "Unable to grab required keyboard/mouse devices" << std::endl;
+        }
+        Grab(false);
+        return false;
+    }
+
+    return true;
 }
 
 void Input::ResyncKeyStates() {
@@ -517,4 +538,38 @@ bool Input::IsKeyPressed(int keycode) const {
         return keys[keycode];
     }
     return false;
+}
+
+bool Input::HasGrabbedKeyboard() const {
+    for (const auto& dev : devices) {
+        if (dev.keyboard_capable && dev.grabbed) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Input::HasGrabbedMouse() const {
+    for (const auto& dev : devices) {
+        if (dev.mouse_capable && dev.grabbed) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Input::AllRequiredGrabbed() const {
+    bool need_keyboard = NeedsKeyboard();
+    bool need_mouse = NeedsMouse();
+    bool keyboard_ok = !need_keyboard || HasGrabbedKeyboard();
+    bool mouse_ok = !need_mouse || HasGrabbedMouse();
+    return keyboard_ok && mouse_ok;
+}
+
+bool Input::NeedsKeyboard() const {
+    return true;
+}
+
+bool Input::NeedsMouse() const {
+    return true;
 }

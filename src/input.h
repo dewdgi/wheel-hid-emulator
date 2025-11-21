@@ -32,8 +32,8 @@ public:
     // Check for Ctrl+M toggle (edge detection)
     bool CheckToggle();
     
-    // Grab/ungrab devices for exclusive access
-    void Grab(bool enable);
+    // Grab/ungrab devices for exclusive access. Returns true if all required devices are grabbed.
+    bool Grab(bool enable);
 
     // Rebuild aggregated key state by querying each keyboard device directly
     void ResyncKeyStates();
@@ -43,6 +43,9 @@ public:
 
     // Check if a key is currently pressed
     bool IsKeyPressed(int keycode) const;
+    bool HasGrabbedKeyboard() const;
+    bool HasGrabbedMouse() const;
+    bool AllRequiredGrabbed() const;
 
 private:
     struct DeviceHandle {
@@ -79,6 +82,8 @@ private:
     bool ShouldLogAgain(std::chrono::steady_clock::time_point& last_log);
     bool WantsKeyboardAuto() const;
     bool WantsMouseAuto() const;
+    bool NeedsKeyboard() const;
+    bool NeedsMouse() const;
 };
 
 #endif // INPUT_H

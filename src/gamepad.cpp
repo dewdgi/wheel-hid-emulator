@@ -118,7 +118,6 @@ GamepadDevice::GamepadDevice()
     state_dirty = false;
         warmup_frames.store(0, std::memory_order_relaxed);
     output_enabled.store(false, std::memory_order_relaxed);
-    frames_sent.store(0, std::memory_order_relaxed);
     button_states.fill(0);
 }
 
@@ -341,24 +340,70 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
         }
     }
     if (!changed) {
+        if (!enable) {
+            input.Grab(false);
+        }
         return;
     }
 
-    input.Grab(enable);
     if (enable) {
+        if (!input.Grab(true)) {
+            {
+                std::lock_guard<std::mutex> lock(state_mutex);
+                enabled = false;
+            }
+            std::cerr << "Enable aborted: unable to grab keyboard/mouse" << std::endl;
+            return;
+        }
+        if (!input.AllRequiredGrabbed()) {
+            input.Grab(false);
+            {
+                std::lock_guard<std::mutex> lock(state_mutex);
+                enabled = false;
+            }
+            std::cerr << "Enable aborted: missing required input device" << std::endl;
+            return;
+        }
+
         input.ResyncKeyStates();
         ControlSnapshot snapshot = CaptureSnapshot(input);
-        output_enabled.store(true, std::memory_order_release);
+
+        output_enabled.store(false, std::memory_order_release);
         warmup_frames.store(0, std::memory_order_release);
-        SendNeutral(false);
-        FlushStateBlocking();
-        ApplySnapshot(snapshot);
+        state_dirty.store(false, std::memory_order_release);
+
+        std::array<uint8_t, 13> neutral_report;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex);
+            ApplyNeutralLocked(false);
+            neutral_report = BuildHIDReportLocked();
+        }
+        WriteReportBlocking(neutral_report);
+
+        std::array<uint8_t, 13> snapshot_report;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex);
+            ApplySnapshotLocked(snapshot);
+            snapshot_report = BuildHIDReportLocked();
+        }
+        WriteReportBlocking(snapshot_report);
+
+        output_enabled.store(true, std::memory_order_release);
         warmup_frames.store(25, std::memory_order_release);
+        state_cv.notify_all();
     } else {
         warmup_frames.store(0, std::memory_order_release);
-        SendNeutral(true);
-        FlushStateBlocking();
         output_enabled.store(false, std::memory_order_release);
+        state_dirty.store(false, std::memory_order_release);
+
+        std::array<uint8_t, 13> neutral_report;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex);
+            ApplyNeutralLocked(true);
+            neutral_report = BuildHIDReportLocked();
+        }
+        WriteReportBlocking(neutral_report);
+        input.Grab(false);
     }
     std::cout << (enable ? "Emulation ENABLED" : "Emulation DISABLED") << std::endl;
 }
@@ -383,6 +428,9 @@ void GamepadDevice::SetFFBGain(float gain) {
 }
 
 void GamepadDevice::ProcessInputFrame(int mouse_dx, int sensitivity, const Input& input) {
+    if (!enabled || !output_enabled.load(std::memory_order_acquire)) {
+        return;
+    }
     ControlSnapshot snapshot = CaptureSnapshot(input);
     bool changed = false;
     {
@@ -489,25 +537,13 @@ void GamepadDevice::ApplyNeutralLocked(bool reset_ffb) {
     button_states.fill(0);
 }
 
-void GamepadDevice::FlushStateBlocking() {
-    if (fd < 0) {
-        return;
-    }
-    const uint64_t target = frames_sent.load(std::memory_order_acquire) + 1;
-    for (int i = 0; i < 200; ++i) {
-        if (frames_sent.load(std::memory_order_acquire) >= target) {
-            return;
-        }
-        if (!gadget_running || !running) {
-            return;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-}
 
 std::array<uint8_t, 13> GamepadDevice::BuildHIDReport() {
     std::lock_guard<std::mutex> lock(state_mutex);
+    return BuildHIDReportLocked();
+}
 
+std::array<uint8_t, 13> GamepadDevice::BuildHIDReportLocked() const {
     std::array<uint8_t, 13> report{};
 
     uint16_t steering_u = static_cast<uint16_t>(static_cast<int16_t>(steering) + 32768);
@@ -549,9 +585,7 @@ std::array<uint8_t, 13> GamepadDevice::BuildHIDReport() {
 
 void GamepadDevice::SendGadgetReport() {
     auto report_data = BuildHIDReport();
-    if (WriteHIDBlocking(report_data.data(), report_data.size())) {
-        frames_sent.fetch_add(1, std::memory_order_acq_rel);
-    }
+    WriteHIDBlocking(report_data.data(), report_data.size());
 }
 
 bool GamepadDevice::WriteHIDBlocking(const uint8_t* data, size_t size) {
@@ -586,6 +620,17 @@ bool GamepadDevice::WriteHIDBlocking(const uint8_t* data, size_t size) {
                 continue;
             }
         }
+        return false;
+    }
+    return true;
+}
+
+bool GamepadDevice::WriteReportBlocking(const std::array<uint8_t, 13>& report) {
+    if (fd < 0) {
+        return false;
+    }
+    if (!WriteHIDBlocking(report.data(), report.size())) {
+        std::cerr << "[GamepadDevice] Failed to write HID report" << std::endl;
         return false;
     }
     return true;

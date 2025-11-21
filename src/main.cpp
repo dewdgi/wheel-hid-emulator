@@ -68,6 +68,12 @@ int main(int, char*[]) {
         int mouse_dx = 0;
         input.Read(mouse_dx);
 
+        if (gamepad.IsEnabled() && !input.AllRequiredGrabbed()) {
+            std::cerr << "Required input device lost; disabling emulator" << std::endl;
+            gamepad.SetEnabled(false, input);
+            continue;
+        }
+
         auto now = std::chrono::steady_clock::now();
         float dt = std::chrono::duration<float>(now - last_tick).count();
         last_tick = now;
