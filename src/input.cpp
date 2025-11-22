@@ -420,6 +420,29 @@ bool Input::CheckToggle() {
     return toggled;
 }
 
+void Input::WaitForAllKeysReleased(int timeout_ms) {
+    auto clamp_timeout = std::max(timeout_ms, 0);
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(clamp_timeout);
+
+    auto any_pressed = [&]() {
+        for (int code = 0; code < KEY_MAX; ++code) {
+            if (keys[code]) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    while (any_pressed()) {
+        if (clamp_timeout > 0 && std::chrono::steady_clock::now() >= deadline) {
+            break;
+        }
+        WaitForEvents(5);
+        int ignore_dx = 0;
+        Read(ignore_dx);
+    }
+}
+
 bool Input::Grab(bool enable) {
     grab_desired = enable;
     if (enable) {
