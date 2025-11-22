@@ -35,6 +35,9 @@ public:
     // Grab/ungrab devices for exclusive access. Returns true if all required devices are grabbed.
     bool Grab(bool enable);
 
+    // Drain outstanding key presses (helps avoid leaving modifiers stuck in the host).
+    void WaitForAllKeysReleased(int timeout_ms = 200);
+
     // Rebuild aggregated key state by querying each keyboard device directly
     void ResyncKeyStates();
 

@@ -547,6 +547,7 @@ void GamepadDevice::SetEnabled(bool enable, Input& input) {
     }
 
     if (enable) {
+        input.WaitForAllKeysReleased(250);
         if (!input.Grab(true)) {
             {
                 std::lock_guard<std::mutex> lock(state_mutex);
