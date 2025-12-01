@@ -25,13 +25,15 @@ The project now consists of a single, gadget-first pipeline: a keyboard+mouse in
 ### `src/main.cpp`
 Ties everything together: config loading, gadget creation, InputManager lifetime, Ctrl+M toggling, and graceful shutdown.
 
+### `src/input/device_enumerator.{h,cpp}` — DeviceEnumerator
+Lightweight service that periodically walks `/dev/input` (or on-demand when jolted) and reports the current list of `event*` nodes. It runs in its own thread, never touches shared device state, and simply calls back with `std::vector<std::string>` snapshots.
+
 ### `src/input/device_scanner.{h,cpp}` — DeviceScanner
-Low-level discovery and event ingestion for `/dev/input/event*` devices.
+Consumes enumerator snapshots, opens the devices it cares about, and owns the live file descriptors.
 - Maintains device records (fd, caps, grab state, per-device key shadows).
 - Auto-discovers keyboard/mouse devices unless overrides are pinned.
 - Provides `WaitForEvents`, `Read(int& mouse_dx)`, `IsKeyPressed`, `Grab`, `ResyncKeyStates`, and health helpers like `AllRequiredGrabbed`.
-- Runs a scanner thread that rescans `/dev/input`, hotplugs hardware, and triggers resyncs when a new keyboard appears.
-- Scans now run in two phases (enumerate + integrate) so `/dev/input` syscalls never hold the `devices_mutex`, keeping event reads responsive even when the filesystem is slow.
+- Integration happens in two phases: the enumerator walks `/dev/input` without holding `devices_mutex`, then DeviceScanner integrates the delta, so event reads never block on filesystem syscalls. Enabling/disabling no longer forces an immediate rescan—the background feed keeps the registry current, so toggles stay instant while still noticing hotplug events within ~400 ms.
 
 ### `src/input/input_manager.{h,cpp}` — InputManager
 Bridges DeviceScanner to the rest of the app.
@@ -66,7 +68,7 @@ Reads `/etc/wheel-emulator.conf`, generating a documented default when absent. K
 | Thread | Entry Point | Purpose |
 |--------|-------------|---------|
 | Main | `main()` | Consumes `InputFrame`, toggles emulation, forwards frames to `WheelDevice`, coordinates shutdown |
-| Scanner | `DeviceScanner::ScannerThreadMain()` | Periodically rescans `/dev/input`, hotplugs devices, honors overrides |
+| Scanner | `DeviceEnumerator::ThreadMain()` | Periodically enumerates `/dev/input` and notifies DeviceScanner of changes |
 | Input Reader | `InputManager::ReaderLoop()` | Waits for events, builds logical frames, detects toggles |
 | Gadget Writer | `WheelDevice::USBGadgetPollingThread()` | Sole HID IN writer (13-byte reports, warmup burst) |
 | Gadget Output | `WheelDevice::USBGadgetOutputThread()` | Reads 7-byte OUTPUT packets and forwards FFB commands |

@@ -10,6 +10,8 @@
 #include <mutex>
 #include <thread>
 
+#include "device_enumerator.h"
+
 class DeviceScanner {
     // Event-driven additions
 public:
@@ -59,16 +61,9 @@ private:
 
     std::vector<DeviceHandle> devices;
     mutable std::mutex devices_mutex;
-    std::mutex scanner_mutex;
-    std::condition_variable scan_cv;
-    std::thread scanner_thread;
-    bool scanner_stop = false;
-    bool scan_requested = false;
-    bool force_scan_requested = false;
+    DeviceEnumerator enumerator_;
     std::string keyboard_override;
     std::string mouse_override;
-    std::chrono::steady_clock::time_point last_scan;
-    std::chrono::steady_clock::time_point last_input_activity;
     std::chrono::steady_clock::time_point last_keyboard_error;
     std::chrono::steady_clock::time_point last_mouse_error;
     std::chrono::steady_clock::time_point last_grab_log;
@@ -78,12 +73,9 @@ private:
     int key_counts[KEY_MAX];
     bool prev_toggle;
     
-    void StartScannerThread();
-    void StopScannerThread();
-    void ScannerThreadMain();
     void RequestScan(bool force);
-    void RunSynchronousScan(bool force);
-    void RefreshDevices(bool force);
+    void HandleEnumeration(std::vector<std::string>&& nodes, bool force);
+    void RefreshDevices(bool force, std::vector<std::string>&& nodes);
     void EnsureManualDevice(const std::string& path, bool want_keyboard, bool want_mouse);
     void CloseDevice(DeviceHandle& dev);
     DeviceHandle* FindDeviceLocked(const std::string& path);
@@ -98,7 +90,6 @@ private:
     bool HasGrabbedMouseLocked() const;
     bool AllRequiredGrabbedLocked() const;
     bool HasOpenDevicesLocked() const;
-    std::vector<std::string> EnumerateEventNodes() const;
     bool BuildAutoDeviceHandle(const std::string& path,
                                bool want_keyboard,
                                bool want_mouse,
