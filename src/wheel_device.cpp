@@ -181,14 +181,34 @@ void WheelDevice::SetEnabled(bool enable, InputManager& input_manager) {
             return;
         }
 
-        if (!WriteReportBlocking(neutral_report)) {
-            std::cerr << "[WheelDevice] Failed to prime HID reports; holding neutral" << std::endl;
-            input_manager.GrabDevices(false);
-            {
-                std::lock_guard<std::mutex> lock(state_mutex);
-                enabled = false;
+        EnsureGadgetThreadsStarted();
+
+        bool neutral_sent = false;
+        output_enabled.store(true, std::memory_order_release);
+        warmup_frames.store(0, std::memory_order_release);
+        state_dirty.store(false, std::memory_order_release);
+
+        {
+            std::lock_guard<std::mutex> lock(state_mutex);
+            ApplyNeutralLocked(false);
+        }
+        state_dirty.store(true, std::memory_order_release);
+        state_cv.notify_all();
+        neutral_sent = WaitForStateFlush(150);
+
+        if (!neutral_sent) {
+            output_enabled.store(false, std::memory_order_release);
+            state_dirty.store(false, std::memory_order_release);
+            if (!WriteReportBlocking(neutral_report)) {
+                std::cerr << "[WheelDevice] Failed to prime HID reports; holding neutral" << std::endl;
+                input_manager.GrabDevices(false);
+                {
+                    std::lock_guard<std::mutex> lock(state_mutex);
+                    enabled = false;
+                }
+                return;
             }
-            return;
+            output_enabled.store(true, std::memory_order_release);
         }
 
         {
@@ -196,8 +216,6 @@ void WheelDevice::SetEnabled(bool enable, InputManager& input_manager) {
             ApplySnapshotLocked(snapshot);
         }
 
-        EnsureGadgetThreadsStarted();
-        output_enabled.store(true, std::memory_order_release);
         warmup_frames.store(25, std::memory_order_release);
         state_cv.notify_all();
     } else {
