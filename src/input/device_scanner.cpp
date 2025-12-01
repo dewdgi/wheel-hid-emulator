@@ -6,10 +6,12 @@
 #include <functional>
 #include <fcntl.h>
 #include <sys/ioctl.h>
+#include <sys/eventfd.h>
 #include <unistd.h>
 #include <cstring>
 #include <vector>
 #include <unordered_set>
+#include <cstdint>
 #include <linux/input-event-codes.h>
 #include <atomic>
 #include <poll.h>
@@ -28,6 +30,7 @@ void DeviceScanner::Read() {
 
 void DeviceScanner::NotifyInputChanged() {
     input_cv.notify_all();
+    SignalWakeFd();
 }
 
 // Bit manipulation macros for input device capabilities
@@ -65,10 +68,12 @@ bool DeviceSupportsMouse(int fd) {
 }
 
 DeviceScanner::DeviceScanner()
-        : enumerator_(std::bind(&DeviceScanner::HandleEnumeration, this, std::placeholders::_1, std::placeholders::_2)),
-          resync_pending(true),
-          grab_desired(false),
-          prev_toggle(false) {
+                : enumerator_(std::bind(&DeviceScanner::HandleEnumeration, this, std::placeholders::_1, std::placeholders::_2)),
+                    resync_pending(true),
+                    grab_desired(false),
+                    prev_toggle(false),
+                    wake_event_fd_(-1) {
+        wake_event_fd_ = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     memset(keys, 0, sizeof(keys));
     memset(key_counts, 0, sizeof(key_counts));
     last_keyboard_error = std::chrono::steady_clock::time_point::min();
@@ -84,6 +89,10 @@ DeviceScanner::~DeviceScanner() {
     std::lock_guard<std::mutex> lock(devices_mutex);
     for (auto& dev : devices) {
         CloseDevice(dev);
+    }
+    if (wake_event_fd_ >= 0) {
+        close(wake_event_fd_);
+        wake_event_fd_ = -1;
     }
 }
 
@@ -130,9 +139,15 @@ bool DeviceScanner::DiscoverMouse(const std::string& device_path) {
 
 bool DeviceScanner::WaitForEvents(int timeout_ms) {
     std::vector<pollfd> pfds;
+    if (wake_event_fd_ >= 0) {
+        pollfd wake{};
+        wake.fd = wake_event_fd_;
+        wake.events = POLLIN;
+        pfds.push_back(wake);
+    }
     {
         std::lock_guard<std::mutex> lock(devices_mutex);
-        pfds.reserve(devices.size());
+        pfds.reserve(pfds.size() + devices.size());
         for (auto& dev : devices) {
             if (dev.fd >= 0) {
                 pollfd p{};
@@ -143,33 +158,39 @@ bool DeviceScanner::WaitForEvents(int timeout_ms) {
         }
     }
 
-    if (pfds.empty()) {
-            auto wait_pred = [this]() {
-                if (!running.load(std::memory_order_relaxed)) {
-                    return true;
-                }
-                std::lock_guard<std::mutex> guard(devices_mutex);
-                return HasOpenDevicesLocked();
-            };
-            if (timeout_ms < 0) {
-                std::unique_lock<std::mutex> lock(input_mutex);
-                input_cv.wait(lock, wait_pred);
-            } else if (timeout_ms == 0) {
-                return false;
-            } else {
-                std::unique_lock<std::mutex> lock(input_mutex);
-                input_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms), wait_pred);
+    bool has_wake_fd = wake_event_fd_ >= 0;
+    bool have_device_fds = pfds.size() > (has_wake_fd ? 1u : 0u);
+    if (!have_device_fds && !has_wake_fd) {
+        auto wait_pred = [this]() {
+            if (!running.load(std::memory_order_relaxed)) {
+                return true;
             }
+            std::lock_guard<std::mutex> guard(devices_mutex);
+            return HasOpenDevicesLocked();
+        };
+        if (timeout_ms < 0) {
+            std::unique_lock<std::mutex> lock(input_mutex);
+            input_cv.wait(lock, wait_pred);
+        } else if (timeout_ms == 0) {
+            return false;
+        } else {
+            std::unique_lock<std::mutex> lock(input_mutex);
+            input_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms), wait_pred);
+        }
         return false;
     }
 
-    int ret = poll(pfds.data(), pfds.size(), timeout_ms);
+    int effective_timeout = timeout_ms;
+    int ret = poll(pfds.data(), pfds.size(), effective_timeout);
     if (ret < 0) {
         if (errno == EINTR) {
             return false;
         }
         std::cerr << "[DeviceScanner::WaitForEvents] poll() error: " << strerror(errno) << std::endl;
         return false;
+    }
+    if (ret > 0 && has_wake_fd && (pfds[0].revents & POLLIN)) {
+        DrainWakeFd();
     }
     return ret > 0;
 }
@@ -469,6 +490,46 @@ void DeviceScanner::RemoveAutoDevicesLocked() {
         } else {
             ++i;
         }
+    }
+}
+
+void DeviceScanner::SignalWakeFd() const {
+    if (wake_event_fd_ < 0) {
+        return;
+    }
+    uint64_t value = 1;
+    while (true) {
+        ssize_t written = write(wake_event_fd_, &value, sizeof(value));
+        if (written == static_cast<ssize_t>(sizeof(value))) {
+            break;
+        }
+        if (written < 0 && errno == EINTR) {
+            continue;
+        }
+        if (written < 0 && errno == EAGAIN) {
+            break;
+        }
+        break;
+    }
+}
+
+void DeviceScanner::DrainWakeFd() const {
+    if (wake_event_fd_ < 0) {
+        return;
+    }
+    uint64_t value;
+    while (true) {
+        ssize_t read_bytes = read(wake_event_fd_, &value, sizeof(value));
+        if (read_bytes == static_cast<ssize_t>(sizeof(value))) {
+            continue;
+        }
+        if (read_bytes < 0 && errno == EINTR) {
+            continue;
+        }
+        if (read_bytes < 0 && errno == EAGAIN) {
+            break;
+        }
+        break;
     }
 }
 

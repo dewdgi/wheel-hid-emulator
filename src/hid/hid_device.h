@@ -21,8 +21,8 @@ public:
     bool Initialize();
     void Shutdown();
 
-    int fd() const { return fd_; }
-    bool IsReady() const { return fd_ >= 0; }
+    int fd() const;
+    bool IsReady() const;
 
     void SetNonBlockingMode(bool enabled);
     void ResetEndpoint();

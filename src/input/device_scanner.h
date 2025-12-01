@@ -73,6 +73,7 @@ private:
     bool keys[KEY_MAX];
     int key_counts[KEY_MAX];
     bool prev_toggle;
+    int wake_event_fd_;
     
     void RequestScan(bool force);
     void HandleEnumeration(std::vector<std::string>&& nodes, bool force);
@@ -97,6 +98,8 @@ private:
                                bool want_mouse,
                                DeviceHandle& out_handle);
     void RemoveAutoDevicesLocked();
+    void SignalWakeFd() const;
+    void DrainWakeFd() const;
 };
 
 #endif // DEVICE_SCANNER_H

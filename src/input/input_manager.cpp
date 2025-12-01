@@ -111,17 +111,21 @@ void InputManager::ReaderLoop() {
         device_scanner_.Read(mouse_dx);
         bool toggle = device_scanner_.CheckToggle();
         WheelInputState next_state = BuildLogicalState();
-        if (!ShouldEmitFrame(mouse_dx, toggle, next_state)) {
-            continue;
-        }
+        bool emit_frame = false;
         {
             std::lock_guard<std::mutex> lock(frame_mutex_);
-            current_state_ = next_state;
-            pending_frame_.logical = next_state;
-            pending_frame_.mouse_dx += mouse_dx;
-            pending_frame_.toggle_pressed = pending_frame_.toggle_pressed || toggle;
-            pending_frame_.timestamp = std::chrono::steady_clock::now();
-            ++frame_sequence_;
+            emit_frame = ShouldEmitFrameLocked(mouse_dx, toggle, next_state);
+            if (emit_frame) {
+                current_state_ = next_state;
+                pending_frame_.logical = next_state;
+                pending_frame_.mouse_dx += mouse_dx;
+                pending_frame_.toggle_pressed = pending_frame_.toggle_pressed || toggle;
+                pending_frame_.timestamp = std::chrono::steady_clock::now();
+                ++frame_sequence_;
+            }
+        }
+        if (!emit_frame) {
+            continue;
         }
         frame_cv_.notify_all();
     }
@@ -175,7 +179,7 @@ WheelInputState InputManager::BuildLogicalState() {
     return snapshot;
 }
 
-bool InputManager::ShouldEmitFrame(int mouse_dx, bool toggle, const WheelInputState& next_state) {
+bool InputManager::ShouldEmitFrameLocked(int mouse_dx, bool toggle, const WheelInputState& next_state) const {
     if (mouse_dx != 0 || toggle) {
         return true;
     }

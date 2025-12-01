@@ -158,6 +158,16 @@ void HidDevice::Shutdown() {
     DestroyUSBGadget();
 }
 
+int HidDevice::fd() const {
+    std::lock_guard<std::mutex> lock(fd_mutex_);
+    return fd_;
+}
+
+bool HidDevice::IsReady() const {
+    std::lock_guard<std::mutex> lock(fd_mutex_);
+    return fd_ >= 0;
+}
+
 void HidDevice::SetNonBlockingMode(bool enabled) {
     bool previous = non_blocking_mode_.exchange(enabled);
     if (previous == enabled) {

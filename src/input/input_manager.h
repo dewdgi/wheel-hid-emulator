@@ -32,7 +32,7 @@ public:
 private:
     void ReaderLoop();
     WheelInputState BuildLogicalState();
-    bool ShouldEmitFrame(int mouse_dx, bool toggle, const WheelInputState& next_state);
+    bool ShouldEmitFrameLocked(int mouse_dx, bool toggle, const WheelInputState& next_state) const;
 
     DeviceScanner device_scanner_;
     std::thread reader_thread_;
