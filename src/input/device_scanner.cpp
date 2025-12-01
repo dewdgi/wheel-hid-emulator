@@ -486,15 +486,18 @@ bool DeviceScanner::CheckToggle() {
     std::lock_guard<std::mutex> lock(devices_mutex);
     bool ctrl = keys[KEY_LEFTCTRL] || keys[KEY_RIGHTCTRL];
     bool m = keys[KEY_M];
-    bool both = ctrl && m;
+    bool combo_active = ctrl && m;
     bool toggled = false;
-    if (both) {
-        prev_toggle = true;
-    } else if (prev_toggle) {
-        // Only fire the toggle once both keys have been released so the shell still sees the key-up
+
+    if (combo_active) {
+        prev_toggle = true;  // Arm once both keys are seen down together
+    } else if (prev_toggle && !ctrl && !m) {
         toggled = true;
         prev_toggle = false;
+    } else if (!ctrl && !m) {
+        prev_toggle = false;
     }
+
     return toggled;
 }
 
