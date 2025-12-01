@@ -1,6 +1,6 @@
 
-#ifndef INPUT_H
-#define INPUT_H
+#ifndef DEVICE_SCANNER_H
+#define DEVICE_SCANNER_H
 
 #include <linux/input.h>
 #include <string>
@@ -10,7 +10,7 @@
 #include <mutex>
 #include <thread>
 
-class Input {
+class DeviceScanner {
     // Event-driven additions
 public:
     std::condition_variable input_cv;
@@ -19,8 +19,8 @@ public:
     void Read();
     bool WaitForEvents(int timeout_ms);
 public:
-    Input();
-    ~Input();
+    DeviceScanner();
+    ~DeviceScanner();
     
     // Discover and open input devices
     // If device_path is provided, use it directly; otherwise auto-detect
@@ -97,6 +97,7 @@ private:
     bool HasGrabbedKeyboardLocked() const;
     bool HasGrabbedMouseLocked() const;
     bool AllRequiredGrabbedLocked() const;
+    bool HasOpenDevicesLocked() const;
 };
 
-#endif // INPUT_H
+#endif // DEVICE_SCANNER_H

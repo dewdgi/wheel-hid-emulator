@@ -1,5 +1,5 @@
 // Improved toggle: allow either Ctrl key, and tolerate quick presses
-#include "input.h"
+#include "device_scanner.h"
 #include <iostream>
 #include <algorithm>
 #include <cerrno>
@@ -15,12 +15,12 @@
 #include <thread>
 extern std::atomic<bool> running;
 
-void Input::Read() {
+void DeviceScanner::Read() {
     int dummy = 0;
     Read(dummy);
 }
 
-void Input::NotifyInputChanged() {
+void DeviceScanner::NotifyInputChanged() {
     input_cv.notify_all();
 }
 
@@ -58,7 +58,7 @@ bool DeviceSupportsMouse(int fd) {
 }
 }
 
-Input::Input() : resync_pending(true), grab_desired(false), prev_toggle(false) {
+DeviceScanner::DeviceScanner() : resync_pending(true), grab_desired(false), prev_toggle(false) {
     memset(keys, 0, sizeof(keys));
     memset(key_counts, 0, sizeof(key_counts));
     last_scan = std::chrono::steady_clock::time_point::min();
@@ -69,7 +69,7 @@ Input::Input() : resync_pending(true), grab_desired(false), prev_toggle(false) {
     StartScannerThread();
 }
 
-Input::~Input() {
+DeviceScanner::~DeviceScanner() {
     StopScannerThread();
     std::lock_guard<std::mutex> lock(devices_mutex);
     for (auto& dev : devices) {
@@ -77,14 +77,14 @@ Input::~Input() {
     }
 }
 
-void Input::StartScannerThread() {
+void DeviceScanner::StartScannerThread() {
     scanner_stop = false;
     scan_requested = true;
     force_scan_requested = true;
-    scanner_thread = std::thread(&Input::ScannerThreadMain, this);
+    scanner_thread = std::thread(&DeviceScanner::ScannerThreadMain, this);
 }
 
-void Input::StopScannerThread() {
+void DeviceScanner::StopScannerThread() {
     {
         std::lock_guard<std::mutex> lock(scanner_mutex);
         scanner_stop = true;
@@ -97,7 +97,7 @@ void Input::StopScannerThread() {
     }
 }
 
-void Input::ScannerThreadMain() {
+void DeviceScanner::ScannerThreadMain() {
     auto interval = std::chrono::milliseconds(120);
     std::unique_lock<std::mutex> lock(scanner_mutex);
     while (!scanner_stop) {
@@ -117,7 +117,7 @@ void Input::ScannerThreadMain() {
     }
 }
 
-void Input::RequestScan(bool force) {
+void DeviceScanner::RequestScan(bool force) {
     {
         std::lock_guard<std::mutex> lock(scanner_mutex);
         scan_requested = true;
@@ -128,12 +128,12 @@ void Input::RequestScan(bool force) {
     scan_cv.notify_all();
 }
 
-void Input::RunSynchronousScan(bool force) {
+void DeviceScanner::RunSynchronousScan(bool force) {
     std::lock_guard<std::mutex> lock(devices_mutex);
     RefreshDevicesLocked(force);
 }
 
-bool Input::DiscoverKeyboard(const std::string& device_path) {
+bool DeviceScanner::DiscoverKeyboard(const std::string& device_path) {
     {
         std::lock_guard<std::mutex> lock(devices_mutex);
         keyboard_override = device_path;
@@ -152,7 +152,7 @@ bool Input::DiscoverKeyboard(const std::string& device_path) {
     return true;
 }
 
-bool Input::DiscoverMouse(const std::string& device_path) {
+bool DeviceScanner::DiscoverMouse(const std::string& device_path) {
     {
         std::lock_guard<std::mutex> lock(devices_mutex);
         mouse_override = device_path;
@@ -170,7 +170,7 @@ bool Input::DiscoverMouse(const std::string& device_path) {
     return true;
 }
 
-bool Input::WaitForEvents(int timeout_ms) {
+bool DeviceScanner::WaitForEvents(int timeout_ms) {
     std::vector<pollfd> pfds;
     {
         std::lock_guard<std::mutex> lock(devices_mutex);
@@ -186,10 +186,23 @@ bool Input::WaitForEvents(int timeout_ms) {
     }
 
     if (pfds.empty()) {
-        RequestScan(false);
-        if (timeout_ms > 0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(timeout_ms));
-        }
+        RequestScan(true);
+            auto wait_pred = [this]() {
+                if (!running.load(std::memory_order_relaxed)) {
+                    return true;
+                }
+                std::lock_guard<std::mutex> guard(devices_mutex);
+                return HasOpenDevicesLocked();
+            };
+            if (timeout_ms < 0) {
+                std::unique_lock<std::mutex> lock(input_mutex);
+                input_cv.wait(lock, wait_pred);
+            } else if (timeout_ms == 0) {
+                return false;
+            } else {
+                std::unique_lock<std::mutex> lock(input_mutex);
+                input_cv.wait_for(lock, std::chrono::milliseconds(timeout_ms), wait_pred);
+            }
         return false;
     }
 
@@ -198,13 +211,13 @@ bool Input::WaitForEvents(int timeout_ms) {
         if (errno == EINTR) {
             return false;
         }
-        std::cerr << "[Input::WaitForEvents] poll() error: " << strerror(errno) << std::endl;
+        std::cerr << "[DeviceScanner::WaitForEvents] poll() error: " << strerror(errno) << std::endl;
         return false;
     }
     return ret > 0;
 }
 
-void Input::Read(int& mouse_dx) {
+void DeviceScanner::Read(int& mouse_dx) {
     if (!running) {
         return;
     }
@@ -230,7 +243,7 @@ void Input::Read(int& mouse_dx) {
     }
 }
 
-bool Input::DrainDevice(DeviceHandle& dev, int& mouse_dx) {
+bool DeviceScanner::DrainDevice(DeviceHandle& dev, int& mouse_dx) {
     if (dev.fd < 0) {
         return false;
     }
@@ -253,7 +266,7 @@ bool Input::DrainDevice(DeviceHandle& dev, int& mouse_dx) {
                 keep = false;
                 break;
             }
-            std::cerr << "[Input::Read] (" << dev.path << ") read error: " << strerror(errno) << std::endl;
+            std::cerr << "[DeviceScanner::Read] (" << dev.path << ") read error: " << strerror(errno) << std::endl;
             keep = false;
             break;
         }
@@ -262,7 +275,7 @@ bool Input::DrainDevice(DeviceHandle& dev, int& mouse_dx) {
             break;
         }
         if (n != sizeof(ev)) {
-            std::cerr << "[Input::Read] (" << dev.path << ") short read" << std::endl;
+            std::cerr << "[DeviceScanner::Read] (" << dev.path << ") short read" << std::endl;
             continue;
         }
 
@@ -299,7 +312,7 @@ bool Input::DrainDevice(DeviceHandle& dev, int& mouse_dx) {
     return keep;
 }
 
-void Input::RefreshDevicesLocked(bool force) {
+void DeviceScanner::RefreshDevicesLocked(bool force) {
     EnsureManualDeviceLocked(keyboard_override, true, false);
     EnsureManualDeviceLocked(mouse_override, false, true);
 
@@ -388,6 +401,7 @@ void Input::RefreshDevicesLocked(bool force) {
         }
 
         devices.push_back(std::move(handle));
+        NotifyInputChanged();
         DeviceHandle& new_dev = devices.back();
         if (new_dev.keyboard_capable) {
             resync_pending = true;
@@ -404,7 +418,7 @@ void Input::RefreshDevicesLocked(bool force) {
     closedir(dir);
 }
 
-void Input::EnsureManualDeviceLocked(const std::string& path, bool want_keyboard, bool want_mouse) {
+void DeviceScanner::EnsureManualDeviceLocked(const std::string& path, bool want_keyboard, bool want_mouse) {
     if (path.empty()) {
         return;
     }
@@ -437,12 +451,13 @@ void Input::EnsureManualDeviceLocked(const std::string& path, bool want_keyboard
     handle.mouse_capable = want_mouse;
     handle.last_active = std::chrono::steady_clock::now();
     devices.push_back(std::move(handle));
+    NotifyInputChanged();
     if (want_keyboard) {
         resync_pending = true;
     }
 }
 
-Input::DeviceHandle* Input::FindDeviceLocked(const std::string& path) {
+DeviceScanner::DeviceHandle* DeviceScanner::FindDeviceLocked(const std::string& path) {
     for (auto& dev : devices) {
         if (dev.path == path) {
             return &dev;
@@ -451,16 +466,17 @@ Input::DeviceHandle* Input::FindDeviceLocked(const std::string& path) {
     return nullptr;
 }
 
-void Input::CloseDevice(DeviceHandle& dev) {
+void DeviceScanner::CloseDevice(DeviceHandle& dev) {
     ReleaseDeviceKeys(dev);
     dev.grabbed = false;
     if (dev.fd >= 0) {
         close(dev.fd);
         dev.fd = -1;
+        NotifyInputChanged();
     }
 }
 
-void Input::ReleaseDeviceKeys(DeviceHandle& dev) {
+void DeviceScanner::ReleaseDeviceKeys(DeviceHandle& dev) {
     if (dev.key_shadow.empty()) {
         return;
     }
@@ -476,7 +492,7 @@ void Input::ReleaseDeviceKeys(DeviceHandle& dev) {
     }
 }
 
-bool Input::ShouldLogAgain(std::chrono::steady_clock::time_point& last_log) {
+bool DeviceScanner::ShouldLogAgain(std::chrono::steady_clock::time_point& last_log) {
     auto now = std::chrono::steady_clock::now();
     constexpr auto kLogInterval = std::chrono::seconds(2);
     if (last_log == std::chrono::steady_clock::time_point::min() ||
@@ -487,17 +503,17 @@ bool Input::ShouldLogAgain(std::chrono::steady_clock::time_point& last_log) {
     return false;
 }
 
-bool Input::WantsKeyboardAuto() const {
+bool DeviceScanner::WantsKeyboardAuto() const {
     return keyboard_override.empty();
 }
 
-bool Input::WantsMouseAuto() const {
+bool DeviceScanner::WantsMouseAuto() const {
     return mouse_override.empty();
 }
 
 // --- Place these at the end of the file ---
 
-bool Input::CheckToggle() {
+bool DeviceScanner::CheckToggle() {
     std::lock_guard<std::mutex> lock(devices_mutex);
     bool ctrl = keys[KEY_LEFTCTRL] || keys[KEY_RIGHTCTRL];
     bool m = keys[KEY_M];
@@ -507,7 +523,7 @@ bool Input::CheckToggle() {
     return toggled;
 }
 
-bool Input::Grab(bool enable) {
+bool DeviceScanner::Grab(bool enable) {
     {
         std::lock_guard<std::mutex> lock(devices_mutex);
         grab_desired = enable;
@@ -581,7 +597,7 @@ bool Input::Grab(bool enable) {
     return true;
 }
 
-void Input::ResyncKeyStates() {
+void DeviceScanner::ResyncKeyStates() {
     std::lock_guard<std::mutex> lock(devices_mutex);
     if (!resync_pending) {
         return;
@@ -625,7 +641,7 @@ void Input::ResyncKeyStates() {
     resync_pending = false;
 }
 
-bool Input::IsKeyPressed(int keycode) const {
+bool DeviceScanner::IsKeyPressed(int keycode) const {
     std::lock_guard<std::mutex> lock(devices_mutex);
     if (keycode >= 0 && keycode < KEY_MAX) {
         return keys[keycode];
@@ -633,30 +649,39 @@ bool Input::IsKeyPressed(int keycode) const {
     return false;
 }
 
-bool Input::HasGrabbedKeyboard() const {
+bool DeviceScanner::HasGrabbedKeyboard() const {
     std::lock_guard<std::mutex> lock(devices_mutex);
     return HasGrabbedKeyboardLocked();
 }
 
-bool Input::HasGrabbedMouse() const {
+bool DeviceScanner::HasGrabbedMouse() const {
     std::lock_guard<std::mutex> lock(devices_mutex);
     return HasGrabbedMouseLocked();
 }
 
-bool Input::AllRequiredGrabbed() const {
+bool DeviceScanner::AllRequiredGrabbed() const {
     std::lock_guard<std::mutex> lock(devices_mutex);
     return AllRequiredGrabbedLocked();
 }
 
-bool Input::NeedsKeyboard() const {
+bool DeviceScanner::NeedsKeyboard() const {
     return true;
 }
 
-bool Input::NeedsMouse() const {
+bool DeviceScanner::NeedsMouse() const {
     return true;
 }
 
-bool Input::HasGrabbedKeyboardLocked() const {
+bool DeviceScanner::HasOpenDevicesLocked() const {
+    for (const auto& dev : devices) {
+        if (dev.fd >= 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool DeviceScanner::HasGrabbedKeyboardLocked() const {
     for (const auto& dev : devices) {
         if (dev.keyboard_capable && dev.grabbed) {
             return true;
@@ -665,7 +690,7 @@ bool Input::HasGrabbedKeyboardLocked() const {
     return false;
 }
 
-bool Input::HasGrabbedMouseLocked() const {
+bool DeviceScanner::HasGrabbedMouseLocked() const {
     for (const auto& dev : devices) {
         if (dev.mouse_capable && dev.grabbed) {
             return true;
@@ -674,7 +699,7 @@ bool Input::HasGrabbedMouseLocked() const {
     return false;
 }
 
-bool Input::AllRequiredGrabbedLocked() const {
+bool DeviceScanner::AllRequiredGrabbedLocked() const {
     bool need_keyboard = NeedsKeyboard();
     bool need_mouse = NeedsMouse();
     bool keyboard_ok = !need_keyboard || HasGrabbedKeyboardLocked();

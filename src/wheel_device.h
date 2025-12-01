@@ -1,104 +1,63 @@
-#ifndef GAMEPAD_H
-#define GAMEPAD_H
+#ifndef WHEEL_DEVICE_H
+#define WHEEL_DEVICE_H
 
 #include <array>
 #include <atomic>
 #include <condition_variable>
-#include <cstdint>
 #include <mutex>
 #include <thread>
 #include <string>
 
-class Input;
+#include "hid/hid_device.h"
+#include "input/wheel_input.h"
+#include "wheel_types.h"
+
+class InputManager;
 extern std::atomic<bool> running;
 
-enum class WheelButton : uint8_t {
-    South = 0,
-    East,
-    West,
-    North,
-    TL,
-    TR,
-    TL2,
-    TR2,
-    Select,
-    Start,
-    ThumbL,
-    ThumbR,
-    Mode,
-    Dead,
-    TriggerHappy1,
-    TriggerHappy2,
-    TriggerHappy3,
-    TriggerHappy4,
-    TriggerHappy5,
-    TriggerHappy6,
-    TriggerHappy7,
-    TriggerHappy8,
-    TriggerHappy9,
-    TriggerHappy10,
-    TriggerHappy11,
-    TriggerHappy12,
-    Count
-};
-
-class GamepadDevice {
+class WheelDevice {
 public:
-    struct ControlSnapshot;
+    WheelDevice();
+    ~WheelDevice();
 
-    GamepadDevice();
-    ~GamepadDevice();
-
-    GamepadDevice(const GamepadDevice&) = delete;
-    GamepadDevice& operator=(const GamepadDevice&) = delete;
-    GamepadDevice(GamepadDevice&&) noexcept = delete;
-    GamepadDevice& operator=(GamepadDevice&&) noexcept = delete;
+    WheelDevice(const WheelDevice&) = delete;
+    WheelDevice& operator=(const WheelDevice&) = delete;
+    WheelDevice(WheelDevice&&) noexcept = delete;
+    WheelDevice& operator=(WheelDevice&&) noexcept = delete;
 
     bool Create();
     void ShutdownThreads();
     void NotifyAllShutdownCVs();
 
     bool IsEnabled();
-    void SetEnabled(bool enable, Input& input);
-    void ToggleEnabled(Input& input);
+    void SetEnabled(bool enable, InputManager& input_manager);
+    void ToggleEnabled(InputManager& input_manager);
     void SetFFBGain(float gain);
 
-    void ProcessInputFrame(int mouse_dx, int sensitivity, const Input& input);
+    void ProcessInputFrame(const InputFrame& frame, int sensitivity);
     void SendNeutral(bool reset_ffb = true);
-    void ApplyCurrentInput(const Input& input);
-    void ApplySnapshot(const ControlSnapshot& snapshot);
+    void ApplySnapshot(const WheelInputState& snapshot);
 
 private:
     void NotifyStateChanged();
-    bool CreateUSBGadget();
-    void DestroyUSBGadget();
-    void SendGadgetReport();
+    bool SendGadgetReport();
     std::array<uint8_t, 13> BuildHIDReport();
     std::array<uint8_t, 13> BuildHIDReportLocked() const;
     void USBGadgetPollingThread();
     void USBGadgetOutputThread();
-    void ReadGadgetOutput();
+    void ReadGadgetOutput(int fd);
     void FFBUpdateThread();
     void ParseFFBCommand(const uint8_t* data, size_t size);
     float ShapeFFBTorque(float raw_force) const;
     bool ApplySteeringLocked();
     bool ApplySteeringDeltaLocked(int delta, int sensitivity);
-    bool ApplySnapshotLocked(const ControlSnapshot& snapshot);
+    bool ApplySnapshotLocked(const WheelInputState& snapshot);
     void ApplyNeutralLocked(bool reset_ffb);
-    ControlSnapshot CaptureSnapshot(const Input& input) const;
     uint32_t BuildButtonBitsLocked() const;
-    bool WriteHIDBlocking(const uint8_t* data, size_t size);
     bool WriteReportBlocking(const std::array<uint8_t, 13>& report);
-    bool WaitForEndpointReady(int timeout_ms = 1500);
-    bool BindUDC();
-    bool UnbindUDC();
-    std::string GadgetUDCPath() const;
-    std::string GadgetStatePath() const;
-    std::string DetectFirstUDC() const;
     void EnsureGadgetThreadsStarted();
     void StopGadgetThreads();
 
-    int fd;
     std::thread gadget_thread;
     std::atomic<bool> gadget_running;
     std::thread gadget_output_thread;
@@ -108,13 +67,12 @@ private:
     std::atomic<bool> state_dirty;
     std::atomic<int> warmup_frames;
     std::atomic<bool> output_enabled;
-    std::mutex gadget_mutex;
     std::mutex enable_mutex;
-    bool udc_bound;
-    std::string udc_name;
     std::mutex state_mutex;
     std::condition_variable state_cv;
     std::condition_variable ffb_cv;
+
+    hid::HidDevice hid_device_;
 
     bool enabled;
     float steering;
@@ -135,4 +93,4 @@ private:
     size_t gadget_output_pending_len;
 };
 
-#endif  // GAMEPAD_H
+#endif  // WHEEL_DEVICE_H
