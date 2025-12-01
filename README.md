@@ -70,6 +70,14 @@ What you should see:
 
 Feel free to remap these inside your game—Linux will always report a Logitech G29.
 
+## Architecture Snapshot
+
+- `DeviceScanner` (`src/input/device_scanner.*`) handles low-level `/dev/input/event*` discovery, hotplugging, grabs, and key state aggregation.
+- `InputManager` (`src/input/input_manager.*`) runs a reader thread that transforms raw events into `InputFrame` objects (mouse delta + logical button/pedal snapshot) for the main loop.
+- `WheelDevice` (`src/wheel_device.*`) owns steering/pedal/button state plus the force-feedback pipeline, and is the only code that mutates HID state when emulation is enabled.
+- `hid::HidDevice` (`src/hid/hid_device.*`) wraps ConfigFS and `/dev/hidg0`, ensuring the Logitech G29 gadget is created, bound, and reused across runs.
+- `logics.md` contains a deeper dive into threading, HID layout, and the enable/disable handshake if you need more detail.
+
 ## Configure (`/etc/wheel-emulator.conf`)
 
 ```ini
