@@ -35,12 +35,14 @@ Consumes enumerator snapshots, opens the devices it cares about, and owns the li
 - Provides `WaitForEvents`, `Read(int& mouse_dx)`, `IsKeyPressed`, `Grab`, `ResyncKeyStates`, and health helpers like `AllRequiredGrabbed`.
 - `CheckToggle` now arms on Ctrl+M down and only fires once **both** keys are released so the desktop receives the key-up events before `EVIOCGRAB` takes ownership, preventing stuck characters in other apps.
 - Integration happens in two phases: the enumerator walks `/dev/input` without holding `devices_mutex`, then DeviceScanner integrates the delta, so event reads never block on filesystem syscalls. Enabling/disabling no longer forces an immediate rescan—the background feed keeps the registry current, so toggles stay instant while still noticing hotplug events within ~400 ms.
+- A dedicated eventfd is polled alongside the device descriptors, so `WaitForEvents(-1)` can be woken explicitly during shutdown or rescans instead of waiting for real keyboard/mouse traffic.
 
 ### `src/input/input_manager.{h,cpp}` — InputManager
 Bridges DeviceScanner to the rest of the app.
 - Dedicated reader thread waits on `DeviceScanner::WaitForEvents`, drains events, detects Ctrl+M, and builds `InputFrame` snapshots (mouse delta, `WheelInputState`, timestamp, toggle flag).
 - Frames are published via condition variable; consumers call `WaitForFrame` or `TryGetFrame`.
 - Exposes `GrabDevices`, `AllRequiredGrabbed`, `ResyncKeyStates`, and `LatestLogicalState` for `WheelDevice` to coordinate enable/disable handshakes.
+- Snapshot diffing now happens while holding `frame_mutex_`, so the reader thread and main thread never race on `current_state_`.
 
 ### `src/wheel_device.{h,cpp}` — WheelDevice
 Owns wheel state (steering, pedals, 26 buttons, hat, FFB state, enable flag) and orchestrates HID I/O.
@@ -55,6 +57,7 @@ Owns wheel state (steering, pedals, 26 buttons, hat, FFB state, enable flag) and
 Encapsulates ConfigFS and `/dev/hidg0`.
 - Loads `libcomposite`/`dummy_hcd` (best effort), ensures `/sys/kernel/config` is mounted, and builds the Logitech G29 descriptor tree if missing.
 - Handles UDC binding/unbinding, endpoint open/close, and exposes blocking report writes used by `WheelDevice`.
+- `fd()`/`IsReady()` now take `fd_mutex_`, matching the rest of the class so output threads never race against endpoint resets.
 
 ### `src/logging/logger.{h,cpp}`
 Mutexed logging with stream-style macros (`LOG_ERROR/WARN/INFO/DEBUG`). Tags like `hid`, `input_manager`, and `wheel_device` keep traces readable.
@@ -142,7 +145,7 @@ Buttons map to `Q,E,F,G,H,R,T,Y,U,I,O,P,1,2,3,4,5,6,7,8,9,0,LeftShift,Space,Tab,
 
 - If `DeviceScanner` loses a grabbed keyboard/mouse, the main loop spots the missing grab via `InputManager::AllRequiredGrabbed()` and disables the emulator so the host never receives partially updated frames.
 - `DeviceScanner::ReleaseDeviceKeys` clears pressed keys for disappearing devices, preventing stuck buttons.
-- Logging tags (`hid`, `input_manager`, `wheel_device`, etc.) make journald/console traces easy to follow.
+- Logging tags (`hid`, `input_manager`, `wheel_device`, etc.) make journald/console traces easy to follow, and shutdown signals propagate through the new eventfd so Ctrl+C always unwinds promptly.
 - `lsusb | grep 046d:c24f` should show the gadget even when emulation is disabled because the device stays enumerated and streams neutral frames.
 
 _Last reviewed: commit f6cc1df (December 2025), the DeviceScanner/InputManager refactor and WheelDevice rename._

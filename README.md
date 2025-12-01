@@ -28,6 +28,7 @@ What you should see:
 - The program creates/reuses the `g29wheel` gadget immediately and pushes a neutral frame, so the OS/game sees a Logitech wheel even before you enable input grabbing.
 - Press **Ctrl+M** to toggle emulation. Hold both keys briefly and release them to fire the toggle—waiting for the release ensures the desktop sees the key-up events before the grab happens, eliminating stuck `m`/Enter spam.
 - Press **Ctrl+C** to exit. Shutdown automatically unbinds and deletes the gadget tree; manual cleanup is only needed if a previous run crashed.
+- Shutdown now wakes any blocking input threads via an internal eventfd, so Ctrl+C responds immediately even if no keyboard/mouse events are happening.
 
 ## Controls & Mapping
 
@@ -73,9 +74,9 @@ Feel free to remap these inside your game—Linux will always report a Logitech 
 ## Architecture Snapshot
 
 - `DeviceScanner` (`src/input/device_scanner.*`) handles low-level `/dev/input/event*` discovery, hotplugging, grabs, and key state aggregation.
-- `InputManager` (`src/input/input_manager.*`) runs a reader thread that transforms raw events into `InputFrame` objects (mouse delta + logical button/pedal snapshot) for the main loop.
+- `InputManager` (`src/input/input_manager.*`) runs a reader thread that transforms raw events into `InputFrame` objects (mouse delta + logical button/pedal snapshot) for the main loop, and it now diffs frames under a mutex so rapid button changes can’t be lost.
 - `WheelDevice` (`src/wheel_device.*`) owns steering/pedal/button state plus the force-feedback pipeline, and is the only code that mutates HID state when emulation is enabled.
-- `hid::HidDevice` (`src/hid/hid_device.*`) wraps ConfigFS and `/dev/hidg0`, creating/binding the Logitech G29 gadget on startup, tearing it down on exit, and reusing any leftover tree from a prior crash when needed.
+- `hid::HidDevice` (`src/hid/hid_device.*`) wraps ConfigFS and `/dev/hidg0`, creating/binding the Logitech G29 gadget on startup, tearing it down on exit, and reusing any leftover tree from a prior crash when needed. Its descriptor accessors are now mutexed, keeping write threads safe while the endpoint is reopened or reset.
 - `logics.md` contains a deeper dive into threading, HID layout, and the enable/disable handshake if you need more detail.
 
 ## Configure (`/etc/wheel-emulator.conf`)
