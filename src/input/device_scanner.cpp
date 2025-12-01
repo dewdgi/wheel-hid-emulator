@@ -9,11 +9,17 @@
 #include <cstring>
 #include <dirent.h>
 #include <vector>
+#include <unordered_set>
 #include <linux/input-event-codes.h>
 #include <atomic>
 #include <poll.h>
 #include <thread>
+#include "../logging/logger.h"
 extern std::atomic<bool> running;
+
+namespace {
+constexpr const char* kTag = "device_scanner";
+}
 
 void DeviceScanner::Read() {
     int dummy = 0;
@@ -129,8 +135,7 @@ void DeviceScanner::RequestScan(bool force) {
 }
 
 void DeviceScanner::RunSynchronousScan(bool force) {
-    std::lock_guard<std::mutex> lock(devices_mutex);
-    RefreshDevicesLocked(force);
+    RefreshDevices(force);
 }
 
 bool DeviceScanner::DiscoverKeyboard(const std::string& device_path) {
@@ -312,94 +317,85 @@ bool DeviceScanner::DrainDevice(DeviceHandle& dev, int& mouse_dx) {
     return keep;
 }
 
-void DeviceScanner::RefreshDevicesLocked(bool force) {
-    EnsureManualDeviceLocked(keyboard_override, true, false);
-    EnsureManualDeviceLocked(mouse_override, false, true);
+void DeviceScanner::RefreshDevices(bool force) {
+    EnsureManualDevice(keyboard_override, true, false);
+    EnsureManualDevice(mouse_override, false, true);
 
-    bool need_auto = WantsKeyboardAuto() || WantsMouseAuto();
-    if (!need_auto) {
-        for (size_t i = 0; i < devices.size();) {
-            if (!devices[i].manual) {
-                CloseDevice(devices[i]);
-                devices.erase(devices.begin() + i);
-            } else {
-                ++i;
-            }
-        }
-        return;
-    }
+    struct ScanPlan {
+        bool need_auto = false;
+        bool want_keyboard = false;
+        bool want_mouse = false;
+        std::chrono::steady_clock::time_point scan_time{};
+        std::unordered_set<std::string> known_paths;
+    } plan;
 
     auto now = std::chrono::steady_clock::now();
     constexpr auto kScanInterval = std::chrono::milliseconds(500);
     constexpr auto kIdleBeforeScan = std::chrono::milliseconds(40);
     constexpr auto kMaxScanDelay = std::chrono::seconds(5);
 
-    bool recently_active = last_input_activity != std::chrono::steady_clock::time_point::min() &&
-                           (now - last_input_activity) < kIdleBeforeScan;
-    bool overdue = last_scan == std::chrono::steady_clock::time_point::min() ||
-                   (now - last_scan) >= kMaxScanDelay;
-    bool throttled = last_scan != std::chrono::steady_clock::time_point::min() &&
-                     (now - last_scan) < kScanInterval;
+    {
+        std::lock_guard<std::mutex> lock(devices_mutex);
+        plan.want_keyboard = WantsKeyboardAuto();
+        plan.want_mouse = WantsMouseAuto();
+        plan.need_auto = plan.want_keyboard || plan.want_mouse;
 
-    if (!force) {
-        if (throttled) {
+        if (!plan.need_auto) {
+            RemoveAutoDevicesLocked();
             return;
         }
-        if (recently_active && !overdue) {
-            return;
+
+        bool recently_active = last_input_activity != std::chrono::steady_clock::time_point::min() &&
+                               (now - last_input_activity) < kIdleBeforeScan;
+        bool overdue = last_scan == std::chrono::steady_clock::time_point::min() ||
+                       (now - last_scan) >= kMaxScanDelay;
+        bool throttled = last_scan != std::chrono::steady_clock::time_point::min() &&
+                         (now - last_scan) < kScanInterval;
+
+        if (!force) {
+            if (throttled) {
+                return;
+            }
+            if (recently_active && !overdue) {
+                return;
+            }
+        }
+
+        plan.scan_time = now;
+        last_scan = now;
+        plan.known_paths.reserve(devices.size());
+        for (const auto& dev : devices) {
+            if (!dev.path.empty()) {
+                plan.known_paths.insert(dev.path);
+            }
         }
     }
 
-    last_scan = now;
+    auto event_nodes = EnumerateEventNodes();
+    std::vector<DeviceHandle> additions;
+    additions.reserve(event_nodes.size());
 
-    DIR* dir = opendir("/dev/input");
-    if (!dir) {
+    for (const auto& path : event_nodes) {
+        if (plan.known_paths.find(path) != plan.known_paths.end()) {
+            continue;
+        }
+        DeviceHandle handle;
+        if (!BuildAutoDeviceHandle(path, plan.want_keyboard, plan.want_mouse, handle)) {
+            continue;
+        }
+        additions.push_back(std::move(handle));
+    }
+
+    if (additions.empty()) {
         return;
     }
 
-    struct dirent* entry;
-    while ((entry = readdir(dir)) != nullptr) {
-        if (strncmp(entry->d_name, "event", 5) != 0) {
+    std::lock_guard<std::mutex> lock(devices_mutex);
+    for (auto& handle : additions) {
+        if (FindDeviceLocked(handle.path)) {
+            CloseDevice(handle);
             continue;
         }
-        std::string path = std::string("/dev/input/") + entry->d_name;
-        DeviceHandle* existing = FindDeviceLocked(path);
-        if (existing) {
-            if (WantsKeyboardAuto() && !existing->keyboard_capable) {
-                bool now_keyboard = DeviceSupportsKeyboard(existing->fd);
-                if (now_keyboard) {
-                    existing->keyboard_capable = true;
-                    resync_pending = true;
-                }
-            }
-            if (WantsMouseAuto() && !existing->mouse_capable) {
-                existing->mouse_capable = DeviceSupportsMouse(existing->fd);
-            }
-            continue;
-        }
-
-        int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK);
-        if (fd < 0) {
-            continue;
-        }
-
-        DeviceHandle handle;
-        handle.fd = fd;
-        handle.path = path;
-        handle.manual = false;
-        handle.last_active = now;
-        if (WantsKeyboardAuto()) {
-            handle.keyboard_capable = DeviceSupportsKeyboard(fd);
-        }
-        if (WantsMouseAuto()) {
-            handle.mouse_capable = DeviceSupportsMouse(fd);
-        }
-
-        if (!handle.keyboard_capable && !handle.mouse_capable) {
-            close(fd);
-            continue;
-        }
-
         devices.push_back(std::move(handle));
         NotifyInputChanged();
         DeviceHandle& new_dev = devices.back();
@@ -415,23 +411,30 @@ void DeviceScanner::RefreshDevicesLocked(bool force) {
             }
         }
     }
-    closedir(dir);
+    if (!additions.empty()) {
+        LOG_DEBUG(kTag, "scan added " << additions.size() << " device(s)");
+    }
 }
 
-void DeviceScanner::EnsureManualDeviceLocked(const std::string& path, bool want_keyboard, bool want_mouse) {
+void DeviceScanner::EnsureManualDevice(const std::string& path, bool want_keyboard, bool want_mouse) {
     if (path.empty()) {
         return;
     }
 
-    DeviceHandle* existing = FindDeviceLocked(path);
-    if (existing) {
-        existing->manual = true;
-        if (want_keyboard && !existing->keyboard_capable) {
-            existing->keyboard_capable = true;
-            resync_pending = true;
+    {
+        std::lock_guard<std::mutex> lock(devices_mutex);
+        DeviceHandle* existing = FindDeviceLocked(path);
+        if (existing) {
+            existing->manual = true;
+            if (want_keyboard && !existing->keyboard_capable) {
+                existing->keyboard_capable = true;
+                resync_pending = true;
+            }
+            if (want_mouse) {
+                existing->mouse_capable = true;
+            }
+            return;
         }
-        if (want_mouse) existing->mouse_capable = true;
-        return;
     }
 
     int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK);
@@ -450,6 +453,12 @@ void DeviceScanner::EnsureManualDeviceLocked(const std::string& path, bool want_
     handle.keyboard_capable = want_keyboard;
     handle.mouse_capable = want_mouse;
     handle.last_active = std::chrono::steady_clock::now();
+
+    std::lock_guard<std::mutex> lock(devices_mutex);
+    if (FindDeviceLocked(path)) {
+        close(handle.fd);
+        return;
+    }
     devices.push_back(std::move(handle));
     NotifyInputChanged();
     if (want_keyboard) {
@@ -501,6 +510,65 @@ bool DeviceScanner::ShouldLogAgain(std::chrono::steady_clock::time_point& last_l
         return true;
     }
     return false;
+}
+
+std::vector<std::string> DeviceScanner::EnumerateEventNodes() const {
+    std::vector<std::string> nodes;
+    DIR* dir = opendir("/dev/input");
+    if (!dir) {
+        return nodes;
+    }
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        if (strncmp(entry->d_name, "event", 5) != 0) {
+            continue;
+        }
+        nodes.emplace_back(std::string("/dev/input/") + entry->d_name);
+    }
+    closedir(dir);
+    return nodes;
+}
+
+bool DeviceScanner::BuildAutoDeviceHandle(const std::string& path,
+                                          bool want_keyboard,
+                                          bool want_mouse,
+                                          DeviceHandle& out_handle) {
+    int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK);
+    if (fd < 0) {
+        return false;
+    }
+
+    DeviceHandle candidate;
+    candidate.fd = fd;
+    candidate.path = path;
+    candidate.manual = false;
+    candidate.last_active = std::chrono::steady_clock::now();
+
+    if (want_keyboard) {
+        candidate.keyboard_capable = DeviceSupportsKeyboard(fd);
+    }
+    if (want_mouse) {
+        candidate.mouse_capable = DeviceSupportsMouse(fd);
+    }
+
+    if (!candidate.keyboard_capable && !candidate.mouse_capable) {
+        close(fd);
+        return false;
+    }
+
+    out_handle = std::move(candidate);
+    return true;
+}
+
+void DeviceScanner::RemoveAutoDevicesLocked() {
+    for (size_t i = 0; i < devices.size();) {
+        if (!devices[i].manual) {
+            CloseDevice(devices[i]);
+            devices.erase(devices.begin() + i);
+        } else {
+            ++i;
+        }
+    }
 }
 
 bool DeviceScanner::WantsKeyboardAuto() const {

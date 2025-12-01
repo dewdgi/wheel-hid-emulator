@@ -31,6 +31,7 @@ Low-level discovery and event ingestion for `/dev/input/event*` devices.
 - Auto-discovers keyboard/mouse devices unless overrides are pinned.
 - Provides `WaitForEvents`, `Read(int& mouse_dx)`, `IsKeyPressed`, `Grab`, `ResyncKeyStates`, and health helpers like `AllRequiredGrabbed`.
 - Runs a scanner thread that rescans `/dev/input`, hotplugs hardware, and triggers resyncs when a new keyboard appears.
+- Scans now run in two phases (enumerate + integrate) so `/dev/input` syscalls never hold the `devices_mutex`, keeping event reads responsive even when the filesystem is slow.
 
 ### `src/input/input_manager.{h,cpp}` — InputManager
 Bridges DeviceScanner to the rest of the app.

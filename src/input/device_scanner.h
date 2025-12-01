@@ -83,8 +83,8 @@ private:
     void ScannerThreadMain();
     void RequestScan(bool force);
     void RunSynchronousScan(bool force);
-    void RefreshDevicesLocked(bool force);
-    void EnsureManualDeviceLocked(const std::string& path, bool want_keyboard, bool want_mouse);
+    void RefreshDevices(bool force);
+    void EnsureManualDevice(const std::string& path, bool want_keyboard, bool want_mouse);
     void CloseDevice(DeviceHandle& dev);
     DeviceHandle* FindDeviceLocked(const std::string& path);
     bool DrainDevice(DeviceHandle& dev, int& mouse_dx);
@@ -98,6 +98,12 @@ private:
     bool HasGrabbedMouseLocked() const;
     bool AllRequiredGrabbedLocked() const;
     bool HasOpenDevicesLocked() const;
+    std::vector<std::string> EnumerateEventNodes() const;
+    bool BuildAutoDeviceHandle(const std::string& path,
+                               bool want_keyboard,
+                               bool want_mouse,
+                               DeviceHandle& out_handle);
+    void RemoveAutoDevicesLocked();
 };
 
 #endif // DEVICE_SCANNER_H
