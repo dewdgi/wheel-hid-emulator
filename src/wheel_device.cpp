@@ -155,13 +155,10 @@ void WheelDevice::SetEnabled(bool enable, InputManager& input_manager) {
         state_dirty.store(false, std::memory_order_release);
 
         std::array<uint8_t, 13> neutral_report;
-        std::array<uint8_t, 13> snapshot_report;
         {
             std::lock_guard<std::mutex> lock(state_mutex);
             ApplyNeutralLocked(false);
             neutral_report = BuildHIDReportLocked();
-            ApplySnapshotLocked(snapshot);
-            snapshot_report = BuildHIDReportLocked();
         }
 
         if (!hid_device_.IsUdcBound() && !hid_device_.BindUDC()) {
@@ -184,7 +181,7 @@ void WheelDevice::SetEnabled(bool enable, InputManager& input_manager) {
             return;
         }
 
-        if (!WriteReportBlocking(neutral_report) || !WriteReportBlocking(snapshot_report)) {
+        if (!WriteReportBlocking(neutral_report)) {
             std::cerr << "[WheelDevice] Failed to prime HID reports; holding neutral" << std::endl;
             input_manager.GrabDevices(false);
             {
@@ -192,6 +189,11 @@ void WheelDevice::SetEnabled(bool enable, InputManager& input_manager) {
                 enabled = false;
             }
             return;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(state_mutex);
+            ApplySnapshotLocked(snapshot);
         }
 
         EnsureGadgetThreadsStarted();
