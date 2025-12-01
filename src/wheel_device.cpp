@@ -212,8 +212,8 @@ void WheelDevice::SetEnabled(bool enable, InputManager& input_manager) {
         if (!WriteReportBlocking(neutral_report)) {
             std::cerr << "[WheelDevice] Failed to send neutral frame while disabling" << std::endl;
         }
-        input_manager.GrabDevices(false);
         input_manager.ResyncKeyStates();
+        input_manager.GrabDevices(false);
     }
     LOG_INFO(kTag, (enable ? "Emulation ENABLED" : "Emulation DISABLED"));
 }

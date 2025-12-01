@@ -602,7 +602,9 @@ void DeviceScanner::ResyncKeyStates() {
         keys[code] = key_counts[code] > 0;
     }
 
-    prev_toggle = false;
+    bool ctrl_pressed = keys[KEY_LEFTCTRL] || keys[KEY_RIGHTCTRL];
+    bool m_pressed = keys[KEY_M];
+    prev_toggle = ctrl_pressed && m_pressed;
     resync_pending = false;
 }
 
