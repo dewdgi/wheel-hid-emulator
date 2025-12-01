@@ -487,8 +487,14 @@ bool DeviceScanner::CheckToggle() {
     bool ctrl = keys[KEY_LEFTCTRL] || keys[KEY_RIGHTCTRL];
     bool m = keys[KEY_M];
     bool both = ctrl && m;
-    bool toggled = both && !prev_toggle;
-    prev_toggle = both;
+    bool toggled = false;
+    if (both) {
+        prev_toggle = true;
+    } else if (prev_toggle) {
+        // Only fire the toggle once both keys have been released so the shell still sees the key-up
+        toggled = true;
+        prev_toggle = false;
+    }
     return toggled;
 }
 
@@ -502,7 +508,7 @@ bool DeviceScanner::Grab(bool enable) {
     int grab = enable ? 1 : 0;
     int changed = 0;
     bool had_error = false;
-    for (auto& dev : devices) {
+        for (auto& dev : devices) {
         if (dev.fd < 0) {
             continue;
         }
@@ -534,10 +540,17 @@ bool DeviceScanner::Grab(bool enable) {
         }
     }
 
-    if (changed > 0 && ShouldLogAgain(last_grab_log)) {
-        std::cout << (enable ? "Grabbed " : "Released ")
-                  << changed << " device" << (changed == 1 ? "" : "s")
-                  << std::endl;
+        if (changed > 0) {
+            if (enable) {
+                if (ShouldLogAgain(last_grab_log)) {
+                    std::cout << "Grabbed " << changed << " device" << (changed == 1 ? "" : "s")
+                              << std::endl;
+                }
+            } else {
+                std::cout << "Released " << changed << " device" << (changed == 1 ? "" : "s")
+                          << std::endl;
+            }
+        }
     }
 
     if (!enable) {
