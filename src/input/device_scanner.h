@@ -1,6 +1,6 @@
 
-#ifndef INPUT_H
-#define INPUT_H
+#ifndef DEVICE_SCANNER_H
+#define DEVICE_SCANNER_H
 
 #include <linux/input.h>
 #include <string>
@@ -8,8 +8,11 @@
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <thread>
 
-class Input {
+#include "device_enumerator.h"
+
+class DeviceScanner {
     // Event-driven additions
 public:
     std::condition_variable input_cv;
@@ -18,8 +21,8 @@ public:
     void Read();
     bool WaitForEvents(int timeout_ms);
 public:
-    Input();
-    ~Input();
+    DeviceScanner();
+    ~DeviceScanner();
     
     // Discover and open input devices
     // If device_path is provided, use it directly; otherwise auto-detect
@@ -38,14 +41,12 @@ public:
     // Rebuild aggregated key state by querying each keyboard device directly
     void ResyncKeyStates();
 
-    // Mark that a resync is needed (e.g., new keyboard device discovered)
-    void MarkResyncNeeded();
-
     // Check if a key is currently pressed
     bool IsKeyPressed(int keycode) const;
     bool HasGrabbedKeyboard() const;
     bool HasGrabbedMouse() const;
     bool AllRequiredGrabbed() const;
+    bool HasRequiredDevices() const;
 
 private:
     struct DeviceHandle {
@@ -60,10 +61,10 @@ private:
     };
 
     std::vector<DeviceHandle> devices;
+    mutable std::mutex devices_mutex;
+    DeviceEnumerator enumerator_;
     std::string keyboard_override;
     std::string mouse_override;
-    std::chrono::steady_clock::time_point last_scan;
-    std::chrono::steady_clock::time_point last_input_activity;
     std::chrono::steady_clock::time_point last_keyboard_error;
     std::chrono::steady_clock::time_point last_mouse_error;
     std::chrono::steady_clock::time_point last_grab_log;
@@ -72,11 +73,14 @@ private:
     bool keys[KEY_MAX];
     int key_counts[KEY_MAX];
     bool prev_toggle;
+    int wake_event_fd_;
     
-    void RefreshDevices();
+    void RequestScan(bool force);
+    void HandleEnumeration(std::vector<std::string>&& nodes, bool force);
+    void RefreshDevices(bool force, std::vector<std::string>&& nodes);
     void EnsureManualDevice(const std::string& path, bool want_keyboard, bool want_mouse);
     void CloseDevice(DeviceHandle& dev);
-    DeviceHandle* FindDevice(const std::string& path);
+    DeviceHandle* FindDeviceLocked(const std::string& path);
     bool DrainDevice(DeviceHandle& dev, int& mouse_dx);
     void ReleaseDeviceKeys(DeviceHandle& dev);
     bool ShouldLogAgain(std::chrono::steady_clock::time_point& last_log);
@@ -84,6 +88,18 @@ private:
     bool WantsMouseAuto() const;
     bool NeedsKeyboard() const;
     bool NeedsMouse() const;
+    bool HasGrabbedKeyboardLocked() const;
+    bool HasGrabbedMouseLocked() const;
+    bool AllRequiredGrabbedLocked() const;
+    bool HasOpenDevicesLocked() const;
+    bool HasRequiredDevicesLocked() const;
+    bool BuildAutoDeviceHandle(const std::string& path,
+                               bool want_keyboard,
+                               bool want_mouse,
+                               DeviceHandle& out_handle);
+    void RemoveAutoDevicesLocked();
+    void SignalWakeFd() const;
+    void DrainWakeFd() const;
 };
 
-#endif // INPUT_H
+#endif // DEVICE_SCANNER_H

@@ -25,7 +25,7 @@ bool Config::Load() {
     sensitivity = 50;
     ffb_gain = 0.3f;
     
-    // Set default button mappings (for reference - hardcoded in gamepad.cpp)
+    // Set default button mappings (for reference - hardcoded in wheel_device.cpp)
     button_map["KEY_Q"] = BTN_TRIGGER;
     button_map["KEY_E"] = BTN_THUMB;
     button_map["KEY_F"] = BTN_THUMB2;
