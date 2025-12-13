@@ -24,6 +24,11 @@ sudo modprobe dummy_hcd   # only needed for self-hosted testing
 sudo ./wheel-emulator
 ```
 
+## For NixOS
+```
+nix-env -f . -iA wheel-hid-emulator
+```
+
 What you should see:
 - The program creates/reuses the `g29wheel` gadget immediately and pushes a neutral frame, so the OS/game sees a Logitech wheel even before you enable input grabbing.
 - Press **Ctrl+M** to toggle emulation. Hold both keys briefly and release them to fire the toggle—waiting for the release ensures the desktop sees the key-up events before the grab happens, eliminating stuck `m`/Enter spam.
