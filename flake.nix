@@ -10,21 +10,23 @@
     system = "x86_64-linux";
     pkgs = import nixpkgs { inherit system; };
   in {
-    packages.${system}.wheel-hid-emulator =
-      pkgs.stdenv.mkDerivation {
-        pname = "wheel-hid-emulator";
-        version = "main";
-        src = ./.;
+    packages.${system}.wheel-hid-emulator = pkgs.stdenv.mkDerivation {
+      pname = "wheel-hid-emulator";
+      version = "main";
 
-        nativeBuildInputs = [ pkgs.pkg-config ];
-        buildInputs = [ pkgs.hidapi ];
+      src = ./.;
 
-        buildPhase = "make";
+      nativeBuildInputs = [ pkgs.pkg-config ];
+      buildInputs = [ pkgs.hidapi ];
 
-        installPhase = ''
-          mkdir -p $out/bin
-          install -m755 wheel-emulator $out/bin/
-        '';
-      };
+      buildPhase = "make";
+
+      installPhase = ''
+        mkdir -p $out/bin
+        install -m755 wheel-emulator $out/bin/
+      '';
+    };
+
+    defaultPackage.${system} = packages.${system}.wheel-hid-emulator;
   };
 }
