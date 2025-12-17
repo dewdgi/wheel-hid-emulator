@@ -26,6 +26,10 @@ sudo ./wheel-emulator
 
 ## For NixOS
 ```
+nix profile install github:youruser/wheel-hid-emulator#wheel-hid-emulator
+
+or
+
 nix-env -f . -iA wheel-hid-emulator
 ```
 
