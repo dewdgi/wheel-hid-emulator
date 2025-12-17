@@ -26,7 +26,7 @@ sudo ./wheel-emulator
 
 ## For NixOS
 ```
-nix profile add github:dewdgi/wheel-hid-emulator#wheel-hid-emulator
+nix profile add --no-write-lock-file github:dewdgi/wheel-hid-emulator#wheel-hid-emulator
 
 or
 
