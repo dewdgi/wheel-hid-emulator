@@ -14,7 +14,13 @@
       pkgs.stdenv.mkDerivation {
         pname = "wheel-hid-emulator";
         version = "main";
-        src = ./.;
+
+        src = pkgs.fetchFromGitHub {
+          owner = "dewdgi";
+          repo = "wheel-hid-emulator";
+          rev = "main";
+          sha256 = "0000000000000000000000000000000000000000000000000000"; # replace with actual
+        };
 
         nativeBuildInputs = [ pkgs.pkg-config ];
         buildInputs = [ pkgs.hidapi ];
