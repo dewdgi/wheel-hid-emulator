@@ -1,5 +1,6 @@
 #include "wheel_device.h"
 #include "input/input_manager.h"
+#include "hid/vjoy_loader.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -96,10 +97,6 @@ void WheelDevice::EnsureGadgetThreadsStarted() {
         gadget_running = true;
         gadget_thread = std::thread(&WheelDevice::USBGadgetPollingThread, this);
     }
-    // gadget_output_thread is not needed for reading on Windows (callback used), 
-    // but we start it to keep structure or just ignore it.
-    // If we don't start it, we must ensure destructor doesn't hang. 
-    // Simplest is to NOT start output thread since it does nothing useful.
 }
 
 void WheelDevice::StopGadgetThreads() {
@@ -179,7 +176,6 @@ void WheelDevice::SetEnabled(bool enable, InputManager& input_manager) {
         }
         state_dirty.store(true, std::memory_order_release);
         state_cv.notify_all();
-        // WaitForStateFlush(150); 
         
         warmup_frames.store(5, std::memory_order_release);
         state_cv.notify_all();
@@ -192,7 +188,6 @@ void WheelDevice::SetEnabled(bool enable, InputManager& input_manager) {
         }
         state_dirty.store(true, std::memory_order_release);
         state_cv.notify_all();
-        // WaitForStateFlush(150);
 
         output_enabled.store(false, std::memory_order_release);
         state_dirty.store(false, std::memory_order_release);
@@ -260,7 +255,6 @@ void WheelDevice::NotifyStateChanged() {
 }
 
 bool WheelDevice::WaitForStateFlush(int timeout_ms) {
-    // Simplified wait
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
     return true;
 }
@@ -381,7 +375,6 @@ bool WheelDevice::WriteReportBlocking(const std::array<uint8_t, 13>& report) {
 }
 
 void WheelDevice::USBGadgetPollingThread() {
-    // This thread now just ensures vJoy updates happen when state is dirty.
     std::unique_lock<std::mutex> lock(state_mutex);
     while (gadget_running && running) {
         state_cv.wait_for(lock, std::chrono::milliseconds(2), [&] {
@@ -402,47 +395,40 @@ void WheelDevice::USBGadgetPollingThread() {
         lock.unlock();
         
         if (allow_output && should_send) {
-            SendGadgetReport(); // Calls hid_device_.WriteReportBlocking -> vJoy
+            SendGadgetReport(); 
         }
         lock.lock();
     }
 }
 
 void WheelDevice::USBGadgetOutputThread() {
-    // Not used on Windows
 }
 
 void WheelDevice::ReadGadgetOutput(int fd) {
-    // Not used
 }
 
 void WheelDevice::OnFFBPacket(void* data) {
-    // std::cout << "[DEBUG] OnFFBPacket called, enabled=" << enabled << std::endl;
     if (!enabled || !data) return;
 
     FFB_DATA* packet = static_cast<FFB_DATA*>(data);
     FFBPType type = PT_CONSTREP; 
     
-    if (Ffb_h_Type(packet, &type) != ERROR_SUCCESS) {
-        // std::cout << "[DEBUG] Ffb_h_Type failed" << std::endl;
+    // Using dynamic loader pointer
+    if (vJoy.Ffb_h_Type(packet, &type) != ERROR_SUCCESS) {
         return;
     }
     
-    // std::cout << "[DEBUG] FFB packet type=" << type << std::endl;
-
     std::lock_guard<std::mutex> lock(state_mutex);
     bool state_changed = false;
 
     switch (type) {
         case PT_CONSTREP: {
             FFB_EFF_CONSTANT effect;
-            if (Ffb_h_Eff_Constant(packet, &effect) == ERROR_SUCCESS) {
+            if (vJoy.Ffb_h_Eff_Constant(packet, &effect) == ERROR_SUCCESS) {
                 // vJoy/Game sends 16-bit signed data in a 32-bit field.
-                // Values > 32767 (e.g., 65535) are actually negative numbers.
                 int16_t raw_mag = static_cast<int16_t>(effect.Magnitude & 0xFFFF);
 
                 // Linux Logic: Positive USB Input (Right) -> Negative Internal Force.
-                // Formula: - (Magnitude * 6096) / 10000
                 ffb_force = -static_cast<int16_t>((static_cast<int32_t>(raw_mag) * 6096) / 10000);
                 
                 state_changed = true;
@@ -450,33 +436,21 @@ void WheelDevice::OnFFBPacket(void* data) {
             break;
         }
 
-        /*
-        case PT_CONDREP: {
-             // Spring support disabled to prevent oscillation/jerking issues reported in testing.
-             // We rely on Constant Force for the main FFB signal.
-             break;
-        }
-        */
         case PT_EFOPREP: {
             FFB_EFF_OP op;
-            if (Ffb_h_EffOp(packet, &op) == ERROR_SUCCESS) {
+            if (vJoy.Ffb_h_EffOp(packet, &op) == ERROR_SUCCESS) {
                 if (op.EffectOp == EFF_STOP) {
                     ffb_force = 0;
                     state_changed = true;
-                } else if (op.EffectOp == EFF_START) {
-                     // Effect started - we might need to re-apply last force if stored, 
-                     // but for Constant Force we usually just get a new packet.
                 }
             }
             break;
         }
         case PT_CTRLREP: {
             FFB_CTRL control;
-            if (Ffb_h_DevCtrl(packet, &control) == ERROR_SUCCESS) {
+            if (vJoy.Ffb_h_DevCtrl(packet, &control) == ERROR_SUCCESS) {
                 if (control == CTRL_STOPALL || control == CTRL_DEVRST) {
                     ffb_force = 0;
-                    // ffb_autocenter = 0; // Should we reset autocenter? Maybe defaults to enabled?
-                    // Linux doesn't reset autocenter on stop, only on 0xf5 command
                     state_changed = true;
                 }
             }
@@ -571,8 +545,6 @@ void WheelDevice::FFBUpdateThread() {
 
 // 1:1 Linux Logic
 void WheelDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
-    // This function is for the Linux USB Gadget implementation.
-    // On Windows/vJoy, we use OnFFBPacket() instead.
 }
 
 // 1:1 Linux Logic
