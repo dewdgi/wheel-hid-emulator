@@ -437,13 +437,9 @@ void WheelDevice::OnFFBPacket(void* data) {
         case PT_CONSTREP: {
             FFB_EFF_CONSTANT effect;
             if (Ffb_h_Eff_Constant(packet, &effect) == ERROR_SUCCESS) {
-                // BUG FIX: vJoy/Game sends 16-bit signed data in a 32-bit field.
+                // vJoy/Game sends 16-bit signed data in a 32-bit field.
                 // Values > 32767 (e.g., 65535) are actually negative numbers.
-                // We must cast to int16_t to interpret them correctly.
                 int16_t raw_mag = static_cast<int16_t>(effect.Magnitude & 0xFFFF);
-
-                // DEBUG: Print corrected value to verify fix
-                // std::cout << "[FFB] CONST | Raw: " << effect.Magnitude << " | Signed: " << raw_mag << std::endl;
 
                 // Linux Logic: Positive USB Input (Right) -> Negative Internal Force.
                 // Formula: - (Magnitude * 6096) / 10000
