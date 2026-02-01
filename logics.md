@@ -9,6 +9,7 @@ This branch implements the **Windows Port** of the Wheel HID Emulator. Instead o
 1.  **Startup**
     - `main.cpp` initializes the console, loads `wheel-emulator.conf`, and setups signal handlers.
     - `WheelDevice::Create()` initializes the vJoy interface (`hid::HidDevice`).
+        - **DLL Injection:** The program extracts `vJoyInterface.dll` from its resources to a temp folder and loads it dynamically. This makes the executable portable (single file).
         - Checks if vJoy is installed and enabled (Target Device ID: 1).
         - Registers the **FFB Callback** to receive Force Feedback commands from games.
         - Acquires the vJoy device.
@@ -30,7 +31,7 @@ This branch implements the **Windows Port** of the Wheel HID Emulator. Instead o
 
 ### `src/hid/hid_device.{h,cpp}` (vJoy Adaptation)
 This module replaces the Linux USB Gadget implementation.
-- **Library:** Links against `vJoyInterface.lib`.
+- **Dynamic Loading:** Uses `vjoy_loader.h` to load functions from the embedded DLL.
 - **Initialization:** Calls `AcquireVJD(1)` to take control of the virtual device.
 - **Reporting:** `WriteReportBlocking` translates our internal 13-byte HID report into a `JOYSTICK_POSITION_V2` structure and sends it to vJoy.
 - **FFB:** Registers a global callback via `FfbRegisterGenCB` to intercept effects from the game.
@@ -84,5 +85,6 @@ Owns the wheel state (steering, pedals, buttons) and the Physics Engine.
 | **Force Logic** | `(Byte - 128) * -48` | `(int16_t)Magnitude * -0.6` |
 | **Physics** | **Identical** | **Identical** |
 | **Build** | `make` (GCC) | `build_with_g++.bat` (MinGW) |
+| **Distribution** | Binary + Config | **Single Executable** (DLL Embedded) |
 
 This port ensures that the **driving feel** remains consistent across platforms by strictly adhering to the original mathematical models while adapting the I/O layer.
