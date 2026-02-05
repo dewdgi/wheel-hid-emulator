@@ -270,6 +270,17 @@ void DeviceScanner::Read(int& mouse_dx) {
         mouse_dx = accumulated_mouse_dx;
         accumulated_mouse_dx = 0;
     }
+
+    // Re-apply cursor lock every frame — ClipCursor can be reset by Windows
+    if (cursor_locked_) {
+        RECT clip;
+        clip.left   = saved_cursor_pos_.x;
+        clip.top    = saved_cursor_pos_.y;
+        clip.right  = saved_cursor_pos_.x + 1;
+        clip.bottom = saved_cursor_pos_.y + 1;
+        ClipCursor(&clip);
+        SetCursorPos(saved_cursor_pos_.x, saved_cursor_pos_.y);
+    }
 }
 
 void DeviceScanner::Read() {
