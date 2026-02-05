@@ -6,7 +6,6 @@
 #include "../input_defs.h"
 
 #include <string>
-#include <condition_variable>
 #include <mutex>
 #include <unordered_set>
 
@@ -40,7 +39,6 @@ public:
     bool HasRequiredDevices() const;
 
     // Event notification
-    std::condition_variable input_cv;
     std::mutex input_mutex;
     void NotifyInputChanged();
     bool WaitForEvents(int timeout_ms);

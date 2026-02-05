@@ -146,7 +146,6 @@ void WheelDevice::SetEnabled(bool enable, InputManager& input_manager) {
 
         EnsurePollingThreadStarted();
 
-        bool neutral_sent = false;
         output_enabled.store(true, std::memory_order_release);
         warmup_frames.store(0, std::memory_order_release);
         state_dirty.store(false, std::memory_order_release);
