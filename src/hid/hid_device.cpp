@@ -1,19 +1,16 @@
 #include "hid_device.h"
 #include "../logging/logger.h"
 #include <iostream>
-#include <thread>
 #include "vjoy_loader.h"
 
 namespace hid {
 
 constexpr const char* kTag = "hid_device";
 
-HidDevice::HidDevice() : udc_bound_(false), non_blocking_mode_(true), vjoy_id_(1) {}
+HidDevice::HidDevice() : acquired_(false), vjoy_id_(1) {}
 
 HidDevice::~HidDevice() {
-    if (vjoy_id_ > 0 && vJoy.IsLoaded()) {
-        // vJoy.RelinquishVJD(vjoy_id_); // Optional
-    }
+    Shutdown();
     FreeVJoyLibrary();
 }
 
@@ -28,7 +25,6 @@ bool HidDevice::Initialize() {
         return false;
     }
 
-    // Check status
     VjdStat status = vJoy.GetVJDStatus(vjoy_id_);
     if (status == VJD_STAT_OWN || status == VJD_STAT_FREE) {
         if (!vJoy.AcquireVJD(vjoy_id_)) {
@@ -41,49 +37,21 @@ bool HidDevice::Initialize() {
         return false;
     }
     
-    udc_bound_ = true;
+    acquired_ = true;
     vJoy.ResetVJD(vjoy_id_);
     return true;
 }
 
 void HidDevice::Shutdown() {
-    if (udc_bound_ && vJoy.IsLoaded()) {
+    if (acquired_ && vJoy.IsLoaded()) {
         vJoy.RelinquishVJD(vjoy_id_);
-        udc_bound_ = false;
+        acquired_ = false;
     }
-}
-
-void HidDevice::ResetEndpoint() {
-    if (vJoy.IsLoaded()) {
-        vJoy.ResetVJD(vjoy_id_);
-    }
-}
-
-bool HidDevice::BindUDC() {
-    return true; // Not needed for vJoy
-}
-
-bool HidDevice::UnbindUDC() {
-    return true; 
-}
-
-bool HidDevice::IsUdcBound() const {
-    return udc_bound_; 
 }
 
 bool HidDevice::IsReady() const {
     if (!vJoy.IsLoaded()) return false;
     return vJoy.GetVJDStatus(vjoy_id_) == VJD_STAT_OWN;
-}
-
-bool HidDevice::WaitForEndpointReady(int timeout_ms) {
-    if (IsReady()) return true;
-    std::this_thread::sleep_for(std::chrono::milliseconds(timeout_ms));
-    return IsReady();
-}
-
-void HidDevice::SetNonBlockingMode(bool non_blocking) {
-    // Not applicable for vJoy API
 }
 
 bool HidDevice::WriteReportBlocking(const std::array<uint8_t, 13>& report) {
@@ -122,10 +90,6 @@ bool HidDevice::WriteReportBlocking(const std::array<uint8_t, 13>& report) {
     iReport.lButtonsEx3 = 0;
 
     return vJoy.UpdateVJD(vjoy_id_, (PVOID)&iReport);
-}
-
-bool HidDevice::WriteHIDBlocking(const uint8_t* data, size_t size) {
-    return false;
 }
 
 void HidDevice::RegisterFFBCallback(void* callback, void* user_data) {

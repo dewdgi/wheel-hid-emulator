@@ -6,7 +6,6 @@
 #include <condition_variable>
 #include <mutex>
 #include <thread>
-#include <string>
 
 #include "hid/hid_device.h"
 #include "input/wheel_input.h"
@@ -43,29 +42,22 @@ public:
 
 private:
     void NotifyStateChanged();
-    bool SendGadgetReport();
+    bool SendReport();
     std::array<uint8_t, 13> BuildHIDReport();
     std::array<uint8_t, 13> BuildHIDReportLocked() const;
-    void USBGadgetPollingThread();
-    void USBGadgetOutputThread();
-    void ReadGadgetOutput(int fd);
+    void VJoyPollingThread();
     void FFBUpdateThread();
-    void ParseFFBCommand(const uint8_t* data, size_t size);
     float ShapeFFBTorque(float raw_force) const;
     bool ApplySteeringLocked();
     bool ApplySteeringDeltaLocked(int delta, int sensitivity);
     bool ApplySnapshotLocked(const WheelInputState& snapshot);
     void ApplyNeutralLocked(bool reset_ffb);
     uint32_t BuildButtonBitsLocked() const;
-    bool WriteReportBlocking(const std::array<uint8_t, 13>& report);
-    bool WaitForStateFlush(int timeout_ms);
-    void EnsureGadgetThreadsStarted();
-    void StopGadgetThreads();
+    void EnsurePollingThreadStarted();
+    void StopPollingThread();
 
-    std::thread gadget_thread;
-    std::atomic<bool> gadget_running;
-    std::thread gadget_output_thread;
-    std::atomic<bool> gadget_output_running;
+    std::thread polling_thread_;
+    std::atomic<bool> polling_running_;
     std::thread ffb_thread;
     std::atomic<bool> ffb_running;
     std::atomic<bool> state_dirty;
@@ -91,17 +83,8 @@ private:
     int8_t dpad_x;
     int8_t dpad_y;
 
-    // vJoy Effect Management
-    struct VJoyEffectState {
-        bool playing = false;
-        long magnitude = 0;
-    };
-    std::array<VJoyEffectState, 17> vjoy_effects_; 
-    
     int16_t ffb_force;
     int16_t ffb_autocenter;
-    std::array<uint8_t, 7> gadget_output_pending{};
-    size_t gadget_output_pending_len;
 };
 
 #endif  // WHEEL_DEVICE_H

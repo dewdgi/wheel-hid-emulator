@@ -2,14 +2,9 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
-#include <cstdlib>
-#include <vector>
 #include <sys/stat.h>
 
-#include "input_defs.h"
-
 bool Config::Load() {
-    // Windows config path: local directory
     const char* system_config = "./wheel-emulator.conf";
 
     if (LoadFromFile(system_config)) {
@@ -17,42 +12,12 @@ bool Config::Load() {
         return true;
     }
     
-    // Generate default config in /etc
     std::cout << "No config found, generating default at " << system_config << std::endl;
     SaveDefault(system_config);
-    std::cout << "Default config saved. Devices will be auto-detected unless paths are specified in the config." << std::endl;
+    std::cout << "Default config saved." << std::endl;
     
-    // Set default values
     sensitivity = 50;
     ffb_gain = 0.3f;
-    
-    // Set default button mappings (for reference - hardcoded in wheel_device.cpp)
-    button_map["KEY_Q"] = BTN_TRIGGER;
-    button_map["KEY_E"] = BTN_THUMB;
-    button_map["KEY_F"] = BTN_THUMB2;
-    button_map["KEY_G"] = BTN_TOP;
-    button_map["KEY_H"] = BTN_TOP2;
-    button_map["KEY_R"] = BTN_PINKIE;
-    button_map["KEY_T"] = BTN_BASE;
-    button_map["KEY_Y"] = BTN_BASE2;
-    button_map["KEY_U"] = BTN_BASE3;
-    button_map["KEY_I"] = BTN_BASE4;
-    button_map["KEY_O"] = BTN_BASE5;
-    button_map["KEY_P"] = BTN_BASE6;
-    button_map["KEY_1"] = BTN_MODE;
-    button_map["KEY_2"] = BTN_DEAD;
-    button_map["KEY_3"] = BTN_TRIGGER_HAPPY1;
-    button_map["KEY_4"] = BTN_TRIGGER_HAPPY2;
-    button_map["KEY_5"] = BTN_TRIGGER_HAPPY3;
-    button_map["KEY_6"] = BTN_TRIGGER_HAPPY4;
-    button_map["KEY_7"] = BTN_TRIGGER_HAPPY5;
-    button_map["KEY_8"] = BTN_TRIGGER_HAPPY6;
-    button_map["KEY_9"] = BTN_TRIGGER_HAPPY7;
-    button_map["KEY_0"] = BTN_TRIGGER_HAPPY8;
-    button_map["KEY_LEFTSHIFT"] = BTN_TRIGGER_HAPPY9;
-    button_map["KEY_SPACE"] = BTN_TRIGGER_HAPPY10;
-    button_map["KEY_TAB"] = BTN_TRIGGER_HAPPY11;
-    button_map["KEY_ENTER"] = BTN_TRIGGER_HAPPY12;
     
     return true;
 }
@@ -106,16 +71,9 @@ void Config::ParseINI(const std::string& content) {
         value.erase(0, value.find_first_not_of(" \t"));
         value.erase(value.find_last_not_of(" \t") + 1);
         
-        if (section == "devices") {
-            if (key == "keyboard") {
-                keyboard_device = value;
-            } else if (key == "mouse") {
-                mouse_device = value;
-            }
-        } else if (section == "sensitivity") {
+        if (section == "sensitivity") {
             if (key == "sensitivity") {
                 int val = std::stoi(value);
-                // Clamp to valid range
                 if (val < 1) val = 1;
                 if (val > 100) val = 100;
                 sensitivity = val;
@@ -126,38 +84,6 @@ void Config::ParseINI(const std::string& content) {
                 if (val < 0.1f) val = 0.1f;
                 if (val > 4.0f) val = 4.0f;
                 ffb_gain = val;
-            }
-        } else if (section == "button_mapping") {
-            // Map button code to key name (format: BUTTON=KEY)
-            int button_code = -1;
-            if (key == "BTN_TRIGGER") button_code = BTN_TRIGGER;
-            else if (key == "BTN_THUMB") button_code = BTN_THUMB;
-            else if (key == "BTN_THUMB2") button_code = BTN_THUMB2;
-            else if (key == "BTN_TOP") button_code = BTN_TOP;
-            else if (key == "BTN_TOP2") button_code = BTN_TOP2;
-            else if (key == "BTN_PINKIE") button_code = BTN_PINKIE;
-            else if (key == "BTN_BASE") button_code = BTN_BASE;
-            else if (key == "BTN_BASE2") button_code = BTN_BASE2;
-            else if (key == "BTN_BASE3") button_code = BTN_BASE3;
-            else if (key == "BTN_BASE4") button_code = BTN_BASE4;
-            else if (key == "BTN_BASE5") button_code = BTN_BASE5;
-            else if (key == "BTN_BASE6") button_code = BTN_BASE6;
-            else if (key == "BTN_DEAD") button_code = BTN_DEAD;
-            else if (key == "BTN_TRIGGER_HAPPY1") button_code = BTN_TRIGGER_HAPPY1;
-            else if (key == "BTN_TRIGGER_HAPPY2") button_code = BTN_TRIGGER_HAPPY2;
-            else if (key == "BTN_TRIGGER_HAPPY3") button_code = BTN_TRIGGER_HAPPY3;
-            else if (key == "BTN_TRIGGER_HAPPY4") button_code = BTN_TRIGGER_HAPPY4;
-            else if (key == "BTN_TRIGGER_HAPPY5") button_code = BTN_TRIGGER_HAPPY5;
-            else if (key == "BTN_TRIGGER_HAPPY6") button_code = BTN_TRIGGER_HAPPY6;
-            else if (key == "BTN_TRIGGER_HAPPY7") button_code = BTN_TRIGGER_HAPPY7;
-            else if (key == "BTN_TRIGGER_HAPPY8") button_code = BTN_TRIGGER_HAPPY8;
-            else if (key == "BTN_TRIGGER_HAPPY9") button_code = BTN_TRIGGER_HAPPY9;
-            else if (key == "BTN_TRIGGER_HAPPY10") button_code = BTN_TRIGGER_HAPPY10;
-            else if (key == "BTN_TRIGGER_HAPPY11") button_code = BTN_TRIGGER_HAPPY11;
-            else if (key == "BTN_TRIGGER_HAPPY12") button_code = BTN_TRIGGER_HAPPY12;
-            
-            if (button_code != -1) {
-                button_map[value] = button_code;
             }
         }
     }
@@ -170,15 +96,7 @@ void Config::SaveDefault(const char* path) {
         return;
     }
     
-    file << "# Wheel Emulator Configuration\n";
-    file << "# Keyboard/mouse devices are auto-detected while running.\n";
-    file << "# Uncomment the paths below if you need to pin a specific device.\n\n";
-    
-    file << "[devices]\n";
-    file << "# keyboard=/dev/input/event6\n";
-    file << "# mouse=/dev/input/event11\n";
-    file << "keyboard=\n";
-    file << "mouse=\n\n";
+    file << "# Wheel Emulator Configuration (Windows / vJoy)\n\n";
     
     file << "[sensitivity]\n";
     file << "sensitivity=50\n\n";
@@ -187,70 +105,28 @@ void Config::SaveDefault(const char* path) {
     file << "# Overall force feedback strength multiplier (0.1 - 4.0)\n";
     file << "gain=0.3\n\n";
     
-    file << "[controls]\n";
-    file << "# Logitech G29 Racing Wheel Controls\n";
-    file << "# Format: CONTROL=KEYBOARD_KEY or MOUSE_BUTTON\n\n";
-    file << "# Primary Controls (Hardcoded)\n";
-    file << "# Steering: Mouse horizontal movement\n";
-    file << "# Throttle: Hold KEY_W to increase (0-100%)\n";
-    file << "# Brake: Hold KEY_S to increase (0-100%)\n";
-    file << "# Clutch: Hold KEY_A to increase (0-100%)\n";
-    file << "# D-Pad: Arrow keys (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT)\n\n";
-    
-    file << "[button_mapping]\n";
-    file << "# Logitech G29 Racing Wheel - Button Mappings (HARDCODED - for reference only)\n";
-    file << "# Note: These mappings are currently hardcoded in the source code.\n";
-    file << "#       Editing this section will NOT change the actual mappings.\n";
-    file << "#       This is for documentation and game binding reference.\n\n";
-    
-    file << "# === CURRENT BUTTON MAPPINGS ===\n";
-    file << "# Recommended Game Actions (customize in your game settings)\n\n";
-    
-    file << "# Button 1:  KEY_Q          (Shift Down / Downshift)\n";
-    file << "# Button 2:  KEY_E          (Shift Up / Upshift)\n";
-    file << "# Button 3:  KEY_F          (Flash Headlights / High Beam Toggle)\n";
-    file << "# Button 4:  KEY_G          (Horn)\n";
-    file << "# Button 5:  KEY_H          (Toggle Headlights)\n";
-    file << "# Button 6:  KEY_R          (Look Right / Change Camera Right)\n";
-    file << "# Button 7:  KEY_T          (Telemetry / Tire Info)\n";
-    file << "# Button 8:  KEY_Y          (Cycle HUD / Dashboard View)\n";
-    file << "# Button 9:  KEY_U          (Pit Limiter)\n";
-    file << "# Button 10: KEY_I          (Ignition / Engine Start)\n";
-    file << "# Button 11: KEY_O          (Wiper / Rain Light)\n";
-    file << "# Button 12: KEY_P          (Pause / Photo Mode)\n";
-    file << "# Button 13: KEY_1          (Mode / PS button)\n";
-    file << "# Button 14: KEY_2          (Traction control down)\n";
-    file << "# Button 15: KEY_3          (Traction control up)\n";
-    file << "# Button 16: KEY_4          (ABS down)\n";
-    file << "# Button 17: KEY_5          (ABS up)\n";
-    file << "# Button 18: KEY_6          (Brake bias forward)\n";
-    file << "# Button 19: KEY_7          (Brake bias rearward)\n";
-    file << "# Button 20: KEY_8          (Engine map / fuel mix -)\n";
-    file << "# Button 21: KEY_9          (Engine map / fuel mix +)\n";
-    file << "# Button 22: KEY_0          (Pit request / standings)\n";
-    file << "# Button 23: KEY_LEFTSHIFT  (Look left / change camera left)\n";
-    file << "# Button 24: KEY_SPACE      (Handbrake / E-Brake)\n";
-    file << "# Button 25: KEY_TAB        (Change camera / cycle view)\n";
-    file << "# Button 26: KEY_ENTER      (Extra bind / headlights, etc.)\n\n";
-    
-    file << "# Note: Map these buttons to game functions via in-game controller settings.\n";
-    file << "# The game will see this as a 'Logitech G29 Driving Force Racing Wheel'.\n\n";
-    
-    file << "# === AXES (Read-only, automatically handled) ===\n";
-    file << "# ABS_X: Steering wheel (-32768 to 32767, mouse horizontal)\n";
-    file << "# ABS_Y: Clutch pedal (32767 at rest, -32768 fully pressed, KEY_A)\n";
-    file << "# ABS_Z: Throttle pedal (32767 at rest, -32768 fully pressed, KEY_W)\n";
-    file << "# ABS_RZ: Brake pedal (32767 at rest, -32768 fully pressed, KEY_S)\n";
-    file << "# ABS_HAT0X: D-Pad horizontal (-1, 0, 1) - Arrow LEFT/RIGHT\n";
-    file << "# ABS_HAT0Y: D-Pad vertical (-1, 0, 1) - Arrow UP/DOWN\n\n";
-    
-    file << "# === PRIMARY CONTROLS (Hardcoded) ===\n";
+    file << "# === CONTROLS (Hardcoded) ===\n";
     file << "# Steering: Mouse horizontal movement (sensitivity adjustable above)\n";
-    file << "# Throttle: Hold KEY_W (analog ramping 0-100%)\n";
-    file << "# Brake: Hold KEY_S (analog ramping 0-100%)\n";
-    file << "# Clutch: Hold KEY_A (analog ramping 0-100%)\n";
+    file << "# Throttle: Hold W (analog ramping 0-100%)\n";
+    file << "# Brake: Hold S (analog ramping 0-100%)\n";
+    file << "# Clutch: Hold A (analog ramping 0-100%)\n";
     file << "# D-Pad: Arrow keys (UP/DOWN/LEFT/RIGHT)\n";
-    file << "# Toggle Emulation: CTRL+M (enable/disable input grabbing)\n";
+    file << "# Toggle Emulation: Ctrl+M\n";
+    file << "#\n";
+    file << "# === BUTTON MAPPINGS (Hardcoded) ===\n";
+    file << "# Button 1:  Q              Button 2:  E\n";
+    file << "# Button 3:  F              Button 4:  G\n";
+    file << "# Button 5:  H              Button 6:  R\n";
+    file << "# Button 7:  T              Button 8:  Y\n";
+    file << "# Button 9:  U              Button 10: I\n";
+    file << "# Button 11: O              Button 12: P\n";
+    file << "# Button 13: 1              Button 14: 2\n";
+    file << "# Button 15: 3              Button 16: 4\n";
+    file << "# Button 17: 5              Button 18: 6\n";
+    file << "# Button 19: 7              Button 20: 8\n";
+    file << "# Button 21: 9              Button 22: 0\n";
+    file << "# Button 23: Left Shift     Button 24: Space\n";
+    file << "# Button 25: Tab            Button 26: Enter\n";
     file << "#\n";
     file << "# NOTE: Real G29 has INVERTED pedals (32767=rest, -32768=pressed).\n";
     file << "#       Enable 'Invert Pedals' option in your game settings if needed.\n";

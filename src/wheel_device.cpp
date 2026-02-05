@@ -3,19 +3,13 @@
 #include "hid/vjoy_loader.h"
 
 #include <algorithm>
-#include <cerrno>
 #include <chrono>
 #include <cmath>
-#include <cstring>
 #include <iostream>
-#include <string>
 #include <thread>
-// #include <unistd.h> 
-// #include <poll.h>
 
 #include "logging/logger.h"
 #include <windows.h>
-#pragma comment(lib, "winmm.lib") 
 
 namespace {
 constexpr size_t kFFBPacketSize = 7;
@@ -35,21 +29,16 @@ void WheelDevice::NotifyAllShutdownCVs() {
 }
 
 WheelDevice::WheelDevice()
-        : gadget_running(false), gadget_output_running(false),
+        : polling_running_(false),
           enabled(false), steering(0.0f), user_steering(0.0f), ffb_offset(0.0f),
           ffb_velocity(0.0f), ffb_gain(1.0f), throttle(0.0f), brake(0.0f),
           clutch(0.0f), dpad_x(0), dpad_y(0), ffb_force(0),
-          ffb_autocenter(0), gadget_output_pending_len(0) {
+          ffb_autocenter(0) {
     ffb_running = false;
     state_dirty = false;
     warmup_frames.store(0, std::memory_order_relaxed);
     output_enabled.store(false, std::memory_order_relaxed);
     button_states.fill(0);
-    // Init effects
-    for (auto& eff : vjoy_effects_) {
-        eff.playing = false; // Default to false wait for START
-        eff.magnitude = 0;
-    }
 }
 
 WheelDevice::~WheelDevice() {
@@ -58,15 +47,14 @@ WheelDevice::~WheelDevice() {
 
 void WheelDevice::ShutdownThreads() {
     ffb_running = false;
-    gadget_running = false;
-    gadget_output_running = false;
+    polling_running_ = false;
     warmup_frames.store(0, std::memory_order_relaxed);
     output_enabled.store(false, std::memory_order_relaxed);
 
     state_cv.notify_all();
     ffb_cv.notify_all();
 
-    StopGadgetThreads();
+    StopPollingThread();
     if (ffb_thread.joinable()) {
         ffb_thread.join();
     }
@@ -91,27 +79,20 @@ bool WheelDevice::Create() {
     return true;
 }
 
-void WheelDevice::EnsureGadgetThreadsStarted() {
-    hid_device_.SetNonBlockingMode(true);
-    if (!gadget_running) {
-        gadget_running = true;
-        gadget_thread = std::thread(&WheelDevice::USBGadgetPollingThread, this);
+void WheelDevice::EnsurePollingThreadStarted() {
+    if (!polling_running_) {
+        polling_running_ = true;
+        polling_thread_ = std::thread(&WheelDevice::VJoyPollingThread, this);
     }
 }
 
-void WheelDevice::StopGadgetThreads() {
-    if (gadget_running) {
-        gadget_running = false;
+void WheelDevice::StopPollingThread() {
+    if (polling_running_) {
+        polling_running_ = false;
         state_cv.notify_all();
     }
-    if (gadget_output_running) {
-        gadget_output_running = false;
-    }
-    if (gadget_thread.joinable()) {
-        gadget_thread.join();
-    }
-    if (gadget_output_thread.joinable()) {
-        gadget_output_thread.join();
+    if (polling_thread_.joinable()) {
+        polling_thread_.join();
     }
 }
 
@@ -163,7 +144,7 @@ void WheelDevice::SetEnabled(bool enable, InputManager& input_manager) {
             return;
         }
 
-        EnsureGadgetThreadsStarted();
+        EnsurePollingThreadStarted();
 
         bool neutral_sent = false;
         output_enabled.store(true, std::memory_order_release);
@@ -254,11 +235,6 @@ void WheelDevice::NotifyStateChanged() {
     ffb_cv.notify_all();
 }
 
-bool WheelDevice::WaitForStateFlush(int timeout_ms) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    return true;
-}
-
 bool WheelDevice::ApplySteeringDeltaLocked(int delta, int sensitivity) {
     if (delta == 0) return false;
 
@@ -324,7 +300,6 @@ std::array<uint8_t, 13> WheelDevice::BuildHIDReport() {
     return BuildHIDReportLocked();
 }
 
-// 1:1 Linux Logic
 std::array<uint8_t, 13> WheelDevice::BuildHIDReportLocked() const {
     std::array<uint8_t, 13> report{};
 
@@ -365,24 +340,20 @@ std::array<uint8_t, 13> WheelDevice::BuildHIDReportLocked() const {
     return report;
 }
 
-bool WheelDevice::SendGadgetReport() {
+bool WheelDevice::SendReport() {
     auto report_data = BuildHIDReport();
     return hid_device_.WriteReportBlocking(report_data);
 }
 
-bool WheelDevice::WriteReportBlocking(const std::array<uint8_t, 13>& report) {
-    return hid_device_.WriteReportBlocking(report);
-}
-
-void WheelDevice::USBGadgetPollingThread() {
+void WheelDevice::VJoyPollingThread() {
     std::unique_lock<std::mutex> lock(state_mutex);
-    while (gadget_running && running) {
+    while (polling_running_ && running) {
         state_cv.wait_for(lock, std::chrono::milliseconds(2), [&] {
-            return !gadget_running || !running ||
+            return !polling_running_ || !running ||
                    state_dirty.load(std::memory_order_acquire) ||
                    warmup_frames.load(std::memory_order_acquire) > 0;
         });
-        if (!gadget_running || !running) break;
+        if (!polling_running_ || !running) break;
 
         bool should_send = state_dirty.exchange(false, std::memory_order_acq_rel);
         int pending = warmup_frames.load(std::memory_order_acquire);
@@ -395,16 +366,10 @@ void WheelDevice::USBGadgetPollingThread() {
         lock.unlock();
         
         if (allow_output && should_send) {
-            SendGadgetReport(); 
+            SendReport(); 
         }
         lock.lock();
     }
-}
-
-void WheelDevice::USBGadgetOutputThread() {
-}
-
-void WheelDevice::ReadGadgetOutput(int fd) {
 }
 
 void WheelDevice::OnFFBPacket(void* data) {
@@ -543,11 +508,7 @@ void WheelDevice::FFBUpdateThread() {
     }
 }
 
-// 1:1 Linux Logic
-void WheelDevice::ParseFFBCommand(const uint8_t* data, size_t size) {
-}
-
-// 1:1 Linux Logic
+// FFB Torque Shaping
 float WheelDevice::ShapeFFBTorque(float raw_force) const {
     float abs_force = std::fabs(raw_force);
     if (abs_force < 80.0f) {

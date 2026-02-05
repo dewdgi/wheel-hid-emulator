@@ -1,9 +1,7 @@
-#ifdef _WIN32
 // Windows Implementation using Raw Input
 #include "device_scanner.h"
 #include <iostream>
 #include <vector>
-#include <thread>
 #include <atomic>
 #include "../logging/logger.h"
 #include <windows.h>
@@ -13,9 +11,6 @@ extern std::atomic<bool> running;
 namespace {
 constexpr const char* kTag = "device_scanner";
 }
-
-// Global hook or window proc might be needed, but for console app we can use a message loop
-// or a hidden window. For RawInput to work, we need a window handle derived from this thread.
 
 static LRESULT CALLBACK RawInputWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
@@ -87,7 +82,6 @@ static WindowsInputBackend* g_backend = nullptr;
 
 // Mapping helper: VK code to Linux KEY_ code
 static int MapVirtualKeyToLinux(UINT vk, UINT scancode, UINT flags) {
-    // Basic mapping, needs to be expanded
     switch (vk) {
         case VK_ESCAPE: return KEY_ESC;
         case '1': return KEY_1;
@@ -130,7 +124,7 @@ static int MapVirtualKeyToLinux(UINT vk, UINT scancode, UINT flags) {
         case VK_OEM_1: return KEY_SEMICOLON;
         case VK_OEM_7: return KEY_APOSTROPHE;
         case VK_OEM_3: return KEY_GRAVE;
-        case VK_SHIFT: return (scancode == 0x36) ? KEY_RIGHTSHIFT : KEY_LEFTSHIFT; // Approximate
+        case VK_SHIFT: return (scancode == 0x36) ? KEY_RIGHTSHIFT : KEY_LEFTSHIFT;
         case VK_OEM_5: return KEY_BACKSLASH;
         case 'Z': return KEY_Z;
         case 'X': return KEY_X;
@@ -164,7 +158,6 @@ static int MapVirtualKeyToLinux(UINT vk, UINT scancode, UINT flags) {
         case VK_RIGHT: return KEY_RIGHT;
         case VK_LWIN: return KEY_LEFTMETA;
         case VK_RWIN: return KEY_RIGHTMETA;
-        // Add more as needed
         default: return KEY_RESERVED;
     }
 }
@@ -192,31 +185,18 @@ void ProcessRawInput(HRAWINPUT hRawInput) {
 
         int linux_code = MapVirtualKeyToLinux(vk, scancode, flags);
         
-        // Debug logging
-        // std::cout << "RawKey: VK=" << vk << " Scan=" << scancode << " Linux=" << linux_code << " Pressed=" << is_pressed << std::endl;
-        
         if (linux_code != KEY_RESERVED) {
             g_scanner->UpdateKeyState(linux_code, is_pressed);
-            
-            // Debug toggle specific keys
-            if (linux_code == KEY_LEFTCTRL || linux_code == KEY_M) {
-                 std::cout << "Key Update: " << (linux_code == KEY_LEFTCTRL ? "LCTRL " : "M ") 
-                           << (is_pressed ? "DOWN" : "UP") << std::endl;
-            }
-        } else {
-             std::cout << "Unknown Key: VK=" << vk << std::endl;
         }
     }
     else if (raw->header.dwType == RIM_TYPEMOUSE) {
         int dx = raw->data.mouse.lLastX;
-        // int dy = raw->data.mouse.lLastY;
         
         if (dx != 0) {
             g_scanner->UpdateMouseState(dx);
         }
         
-        // Buttons
-        // RI_MOUSE_LEFT_BUTTON_DOWN etc.
+        // Mouse buttons
         USHORT btn_flags = raw->data.mouse.usButtonFlags;
         if (btn_flags & RI_MOUSE_LEFT_BUTTON_DOWN) g_scanner->UpdateKeyState(BTN_LEFT, true);
         if (btn_flags & RI_MOUSE_LEFT_BUTTON_UP) g_scanner->UpdateKeyState(BTN_LEFT, false);
@@ -238,10 +218,9 @@ LRESULT CALLBACK RawInputWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
 // DeviceScanner Implementation
 
-DeviceScanner::DeviceScanner() : enumerator_([](std::vector<std::string>&&, bool){}) {
+DeviceScanner::DeviceScanner() {
     g_scanner = this;
     g_backend = new WindowsInputBackend();
-    // Defer initialization to the reader thread
 }
 
 DeviceScanner::~DeviceScanner() {
@@ -288,7 +267,6 @@ void DeviceScanner::Read() {
     Read(dummy);
 }
 
-// Helper needed by the windows proc to callback
 void DeviceScanner::UpdateKeyState(int linux_code, bool pressed) {
     std::lock_guard<std::mutex> lock(input_mutex);
     if (pressed) {
@@ -296,13 +274,6 @@ void DeviceScanner::UpdateKeyState(int linux_code, bool pressed) {
     } else {
         active_keys.erase(linux_code);
     }
-    
-    InputEvent ev;
-    ev.code = linux_code;
-    ev.value = pressed ? 1 : 0;
-    // Notify or queue event? 
-    // The original scanner updates state.
-    // We notify CV
     NotifyInputChanged();
 }
 
@@ -313,7 +284,7 @@ void DeviceScanner::UpdateMouseState(int dx) {
 }
 
 void DeviceScanner::NotifyInputChanged() {
-    // input_cv.notify_all(); // Not used in Windows message loop variant
+    // CV not used — Windows message loop drives input via MsgWaitForMultipleObjects
 }
 
 bool DeviceScanner::WaitForEvents(int timeout_ms) {
@@ -324,20 +295,13 @@ bool DeviceScanner::WaitForEvents(int timeout_ms) {
         }
     }
 
-    // Windows equivalent of "Wait for IO"
-    // We use MsgWaitForMultipleObjects to wait for message input
-    // returning true immediately if input was processed.
-    
     if (g_backend) g_backend->PumpMessages();
 
-    // Calculate timeout
     DWORD loop_timeout = (timeout_ms < 0) ? INFINITE : static_cast<DWORD>(timeout_ms);
     
-    // Wait for a message to arrive
     DWORD result = MsgWaitForMultipleObjects(0, NULL, FALSE, loop_timeout, QS_ALLINPUT);
     
     if (result == WAIT_OBJECT_0) {
-        // Input available
         if (g_backend) g_backend->PumpMessages();
         return true;
     }
@@ -346,10 +310,6 @@ bool DeviceScanner::WaitForEvents(int timeout_ms) {
 }
 
 bool DeviceScanner::IsKeyPressed(int keycode) const {
-    // Note: mutex is not mutable in header, casting away constness or using external synchronization is needed
-    // For now assuming caller handles race or we don't care about atomic read of set
-    // Ideally input_mutex should be mutable.
-    // Making a const_cast for now to respect thread safety if called from other threads.
     std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(input_mutex));
     return active_keys.find(keycode) != active_keys.end();
 }
@@ -366,10 +326,8 @@ bool DeviceScanner::Grab(bool enable) {
 void DeviceScanner::LockCursor() {
     if (cursor_locked_) return;
 
-    // Save current cursor position so we can restore it later
     GetCursorPos(&saved_cursor_pos_);
 
-    // Clip cursor to a 1x1 rect at its current position — it cannot move
     RECT clip;
     clip.left   = saved_cursor_pos_.x;
     clip.top    = saved_cursor_pos_.y;
@@ -377,7 +335,6 @@ void DeviceScanner::LockCursor() {
     clip.bottom = saved_cursor_pos_.y + 1;
     ClipCursor(&clip);
 
-    // Hide the cursor (ShowCursor is ref-counted: one call to hide)
     while (ShowCursor(FALSE) >= 0) {}
 
     cursor_locked_ = true;
@@ -387,13 +344,8 @@ void DeviceScanner::LockCursor() {
 void DeviceScanner::UnlockCursor() {
     if (!cursor_locked_) return;
 
-    // Remove the clip constraint
     ClipCursor(NULL);
-
-    // Restore cursor position to where it was before the lock
     SetCursorPos(saved_cursor_pos_.x, saved_cursor_pos_.y);
-
-    // Show the cursor again (undo the hide)
     while (ShowCursor(TRUE) < 0) {}
 
     cursor_locked_ = false;
@@ -402,7 +354,6 @@ void DeviceScanner::UnlockCursor() {
 
 void DeviceScanner::ResyncKeyStates() { }
 
-// Check toggle: Ctrl + M with Latch for Single Event logic
 bool DeviceScanner::CheckToggle() {
     bool down = IsKeyPressed(KEY_LEFTCTRL) && IsKeyPressed(KEY_M);
     if (down && !toggle_latch_) {
@@ -419,5 +370,3 @@ bool DeviceScanner::HasGrabbedKeyboard() const { return true; }
 bool DeviceScanner::HasGrabbedMouse() const { return true; }
 bool DeviceScanner::AllRequiredGrabbed() const { return true; }
 bool DeviceScanner::HasRequiredDevices() const { return true; }
-
-#endif

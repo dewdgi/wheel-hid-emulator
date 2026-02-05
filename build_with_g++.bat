@@ -31,7 +31,6 @@ g++ -std=c++17 ^
     src/logging/logger.cpp ^
     src/input/device_scanner.cpp ^
     src/input/input_manager.cpp ^
-    src/input/device_enumerator.cpp ^
     vjoy_dll.o ^
     -I src/vjoy_sdk/inc ^
     -lwinmm ^

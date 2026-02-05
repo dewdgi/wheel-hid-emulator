@@ -14,7 +14,6 @@
 // Windows specifics
 #include <windows.h>
 #include <mmsystem.h>
-#pragma comment(lib, "winmm.lib") 
 
 int ParseLogLevelFromArgs(int argc, char* argv[]);
 
@@ -61,8 +60,7 @@ int main(int argc, char* argv[]) {
     }
 
     InputManager input_manager;
-    // On Windows, device paths might be different or unused by specific implementation
-    if (!input_manager.Initialize(config.keyboard_device, config.mouse_device)) {
+    if (!input_manager.Initialize("", "")) {
         std::cerr << "Failed to initialize input manager" << std::endl;
         timeEndPeriod(1);
         return 1;
