@@ -1,90 +1,136 @@
-## Wheel HID Emulator Logic (Windows Port - February 2026)
+## Wheel HID Emulator — Architecture & Logic
 
-This branch implements the **Windows Port** of the Wheel HID Emulator. Instead of creating a USB Gadget (Linux), it acts as a **feeder** for the **vJoy (Virtual Joystick)** driver.
+Windows-only steering wheel emulator using vJoy. Turns keyboard + mouse into a virtual Logitech G29.
 
 ---
 
-## High-Level Flow
+## Source Tree
 
-1.  **Startup**
-    - `main.cpp` initializes the console, loads `wheel-emulator.conf`, and setups signal handlers.
-    - `WheelDevice::Create()` initializes the vJoy interface (`hid::HidDevice`).
-        - **DLL Injection:** The program extracts `vJoyInterface.dll` from its resources to a temp folder and loads it dynamically. This makes the executable portable (single file).
-        - Checks if vJoy is installed and enabled (Target Device ID: 1).
-        - Registers the **FFB Callback** to receive Force Feedback commands from games.
-        - Acquires the vJoy device.
-    - `InputManager::Initialize()` starts scanning for keyboard and mouse input.
+```
+src/
+├── main.cpp                    — Entry point, console setup, signal handlers
+├── config.{h,cpp}              — INI parser for wheel-emulator.conf
+├── input_defs.h                — Key code definitions (VK → Linux keycode mapping)
+├── wheel_types.h               — Shared type definitions (WheelState, InputFrame)
+├── wheel_device.{h,cpp}        — Core wheel logic, FFB physics, vJoy report submission
+├── hid/
+│   ├── hid_device.{h,cpp}      — vJoy device lifecycle (acquire, release, FFB callback)
+│   ├── vjoy_loader.{h,cpp}     — Dynamic loading of embedded vJoyInterface.dll
+│   └── vjoy_dll.rc             — Resource script embedding the DLL into the EXE
+├── input/
+│   ├── device_scanner.{h,cpp}  — Raw Input API: keyboard/mouse capture, Ctrl+M toggle
+│   ├── input_manager.{h,cpp}   — Aggregates input frames, bridges scanner → wheel_device
+│   └── wheel_input.h           — Input event structures
+├── logging/
+│   └── logger.{h,cpp}          — Console logging
+└── vjoy_sdk/inc/               — vJoy SDK headers (public.h, vjoyinterface.h)
+```
 
-2.  **Main Loop**
-    - `InputManager` captures keyboard/mouse state (using standard Windows APIs or Raw Input via the scanner).
-    - `WheelDevice::ProcessInputFrame()` calculates steering angles and button states.
-    - **Output:** The `USBGadgetPollingThread` (kept for structural consistency) pushes updates to vJoy via `UpdateVJD`.
+---
 
-3.  **Force Feedback (FFB) Loop**
-    - The vJoy driver invokes our callback (`OnFFBPacket`) whenever the game sends an FFB command.
-    - We parse the packet, extract the force **Magnitude**, and update the internal physics model.
-    - `FFBUpdateThread` runs at ~100Hz, calculating the final torque (Spring + Constant Force + Friction) and applying it to the steering axis.
+## Threading Model (3 threads)
+
+| Thread | Function | Rate | Purpose |
+| :--- | :--- | :--- | :--- |
+| **Reader Loop** | `DeviceScanner::ReaderLoop()` | Event-driven | Windows Raw Input message pump. Captures keyboard/mouse via hidden HWND. |
+| **vJoy Polling** | `WheelDevice::VJoyPollingThread()` | ~60 Hz | Sends `JOYSTICK_POSITION_V2` reports to vJoy via `UpdateVJD()`. |
+| **FFB Update** | `WheelDevice::FFBUpdateThread()` | ~1 kHz | Physics simulation: spring, friction, constant force → steering axis resistance. |
+
+The FFB callback (`OnFFBPacket`) runs on the vJoy driver's thread — it only writes `ffb_force` atomically, consumed by the FFB Update thread.
+
+---
+
+## Startup Sequence
+
+1. `main.cpp` initializes console, loads `wheel-emulator.conf`, sets up Ctrl+C handler.
+2. `WheelDevice::Create()` → `hid::HidDevice::Create()`:
+   - `vjoy_loader` extracts `vJoyInterface.dll` from EXE resources to `%TEMP%` and `LoadLibrary()`s it.
+   - Checks vJoy is enabled, Device 1 exists with correct config.
+   - Calls `AcquireVJD(1)`, registers FFB callback via `FfbRegisterGenCB`.
+3. `InputManager::Initialize()` → `DeviceScanner` registers for Raw Input (keyboard + mouse) via a message-only window.
+4. Main loop: `InputManager::WaitForFrame()` → `WheelDevice::ProcessInputFrame()` → state update → `VJoyPollingThread` sends report.
 
 ---
 
 ## Key Modules
 
-### `src/hid/hid_device.{h,cpp}` (vJoy Adaptation)
-This module replaces the Linux USB Gadget implementation.
-- **Dynamic Loading:** Uses `vjoy_loader.h` to load functions from the embedded DLL.
-- **Initialization:** Calls `AcquireVJD(1)` to take control of the virtual device.
-- **Reporting:** `WriteReportBlocking` translates our internal 13-byte HID report into a `JOYSTICK_POSITION_V2` structure and sends it to vJoy.
-- **FFB:** Registers a global callback via `FfbRegisterGenCB` to intercept effects from the game.
+### `wheel_device.{h,cpp}` — Core Logic
+Owns the wheel state (steering angle, pedals, buttons) and the FFB physics engine.
 
-### `src/wheel_device.{h,cpp}` — Core Logic
-Owns the wheel state (steering, pedals, buttons) and the Physics Engine.
-- **FFB Mathematics (Crucial):**
-    - The physics model is **1:1 identical to the Linux version**.
-    - **Input Conversion:** vJoy sends `Magnitude` as a 32-bit integer, but the raw data is actually a **16-bit signed integer**.
-    - **Fix:** We cast `Magnitude & 0xFFFF` to `int16_t`. This prevents integer overflow where `-1` (65535) was interpreted as `+65535`.
-    - **Direction:** Positive input from vJoy (Turn Right) is mapped to **Negative Internal Force**, matching the Linux "Negative Feedback" stability loop.
+- **`ProcessInputFrame()`** — Converts mouse delta → steering angle, key states → pedals/buttons.
+- **`VJoyPollingThread()`** — Wakes on state change, calls `SendReport()` → `hid_device.SetAxes()`/`SetButtons()` → `UpdateVJD()`.
+- **`FFBUpdateThread()`** — ~1kHz physics loop: reads `ffb_force`, computes spring + constant + friction torque, applies to steering axis.
+- **`OnFFBPacket()`** — Static callback invoked by vJoy driver. Parses `FFB_DATA`, extracts Magnitude with `int16_t` cast to prevent overflow, scales and inverts force.
 
-### `src/input/*` — Input System
-- **DeviceScanner:** Enumerates Windows input devices.
-- **InputManager:** Grabs exclusive access (where possible) or reads state to feed the emulator.
-- **Toggling:** `LCTRL + M` captures/releases the mouse cursor and enables/disables the virtual wheel.
+**FFB Overflow Fix (Critical):**
+vJoy sends `Magnitude` as a 32-bit int, but the raw data is a 16-bit signed value. We cast `Magnitude & 0xFFFF` to `int16_t`. Without this, `-1` (0xFFFF = 65535 unsigned) was interpreted as `+65535`, causing violent wheel snap.
+
+### `hid/hid_device.{h,cpp}` — vJoy Interface
+- **`Create()`** — Acquires vJoy Device 1, validates axis/button configuration.
+- **`SetAxes()`/`SetButtons()`** — Populates `JOYSTICK_POSITION_V2`, calls `UpdateVJD()`.
+- **`RegisterFFBCallback()`** — Wraps `FfbRegisterGenCB()`.
+- **`Release()`** — Calls `RelinquishVJD()`.
+
+### `hid/vjoy_loader.{h,cpp}` — DLL Extraction & Loading
+- Extracts `vJoyInterface.dll` from the EXE's embedded resource (`vjoy_dll.rc`) to `%TEMP%`.
+- Uses `LoadLibrary` + `GetProcAddress` to resolve all vJoy API functions at runtime.
+- Makes the EXE fully portable — no vJoy SDK DLLs needed alongside it.
+
+### `input/device_scanner.{h,cpp}` — Raw Input Capture
+- Creates a hidden message-only `HWND` and registers for `RAWINPUT` (keyboard + mouse).
+- **`ReaderLoop()`** — `MsgWaitForMultipleObjects` pump. Translates `VK_*` codes → Linux keycodes via lookup table.
+- **`Ctrl+M toggle`** — Captures/releases mouse cursor, hides/shows cursor, enables/disables emulation.
+- **Cursor lock** — `ClipCursor()` re-applied every frame to prevent escape on focus loss.
+
+### `input/input_manager.{h,cpp}` — Frame Aggregation
+- Bridges `DeviceScanner` → `WheelDevice`.
+- `WaitForFrame()` blocks until input arrives, returns accumulated `InputFrame` (mouse deltas + key states).
+
+### `config.{h,cpp}` — Configuration
+- Parses `wheel-emulator.conf` INI: `[sensitivity]` and `[ffb]` sections.
+- `SaveDefault()` generates a documented default config file.
 
 ---
 
-## Force Feedback Pipeline (Windows Specific)
+## Force Feedback Pipeline
 
-1.  **Game** (e.g., Assetto Corsa) sends FFB command (e.g., "Turn Right with force 50%").
-2.  **vJoy Driver** receives the command and calls our registered function.
-3.  **Callback (`OnFFBPacket`):**
-    - Identifies packet type (`PT_CONSTREP` for Constant Force).
-    - Extracts `Magnitude` (Range: -10000 to +10000).
-    - **Overflow Fix:** Casts raw value to `int16_t`.
-    - **Scaling:** Converts vJoy range (10000) to internal physics range (6096).
-    - **Inversion:** `InternalForce = -RawForce` (Essential for stability).
-4.  **Physics Loop (`FFBUpdateThread`):**
-    - Applies the calculated force to the steering axis.
-    - Simulates inertia, friction, and return-to-center springs.
-    - Updates the virtual "Mouse" position to resist the user's hand.
+```
+Game (e.g. Assetto Corsa)
+  → vJoy Driver
+    → OnFFBPacket() callback [vJoy thread]
+      → Parse PT_CONSTREP, extract Magnitude
+      → Cast: int16_t(Magnitude & 0xFFFF)     [overflow fix]
+      → Scale: vJoy range (10000) → internal (6096)
+      → Invert: force = -raw                   [stability]
+      → Store: ffb_force (atomic)
+    → FFBUpdateThread() [~1kHz]
+      → Read ffb_force
+      → Compute: spring + constant + friction torque
+      → Apply to steering axis (resist mouse movement)
+```
 
 ---
 
 ## Configuration
 
-- **`wheel-emulator.conf`**:
-    - `[sensitivity]`: Controls steering sensitivity (1-100).
-    - `[ffb]`: Global gain multiplier for force feedback effects.
+`wheel-emulator.conf` (auto-generated with defaults if missing):
+
+```ini
+[sensitivity]
+sensitivity=50    # 1-100. Higher = faster steering.
+
+[ffb]
+gain=1.0          # 0.1-4.0. Force Feedback strength multiplier.
+```
 
 ---
 
-## Comparison with Linux Version
+## Build
 
-| Feature | Linux (Original) | Windows (Port) |
-| :--- | :--- | :--- |
-| **Backend** | ConfigFS USB Gadget (`/dev/hidg0`) | vJoy Driver (`vJoyInterface.dll`) |
-| **FFB Source** | Raw USB HID Packets | vJoy `FFB_DATA` Structures |
-| **Force Logic** | `(Byte - 128) * -48` | `(int16_t)Magnitude * -0.6` |
-| **Physics** | **Identical** | **Identical** |
-| **Build** | `make` (GCC) | `build_with_g++.bat` (MinGW) |
-| **Distribution** | Binary + Config | **Single Executable** (DLL Embedded) |
+**Requirements:** MinGW-w64 (g++) on PATH.
 
-This port ensures that the **driving feel** remains consistent across platforms by strictly adhering to the original mathematical models while adapting the I/O layer.
+```
+build_with_g++.bat
+```
+
+Produces `wheel-emulator.exe` (~1.6 MB). The vJoy DLL is embedded — no external DLLs needed.

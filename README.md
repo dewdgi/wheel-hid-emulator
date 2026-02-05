@@ -63,10 +63,10 @@ gain=1.0          # 0.1-4.0. Force Feedback strength multiplier.
 
 **Requirements:**
 -   **MinGW-w64** (g++) added to PATH.
--   **vJoy SDK** (Headers/Libs included in `src/vjoy_sdk` or installed).
 
 **Build:**
-Run `build_with_g++.bat`. It will produce a single `wheel-emulator.exe`.
+Run `build_with_g++.bat`. It produces a single portable `wheel-emulator.exe` (~1.6 MB).
+The vJoy SDK headers are included in `src/vjoy_sdk/` and `vJoyInterface.dll` is embedded in the executable at build time — no external DLLs needed.
 
 ## Troubleshooting
 
