@@ -67,6 +67,6 @@ MIT License. See [LICENSE](LICENSE).
 
 ---
 
-Most of this code was written with heavy use of AI (Claude, GPT, Copilot).
+Most of this code was written with heavy use of AI.
 
 Architecture details: [`logics.md`](logics.md)
