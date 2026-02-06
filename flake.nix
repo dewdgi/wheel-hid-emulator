@@ -16,7 +16,7 @@
           install -Dm755 wheel-emulator $out/bin/wheel-emulator
         '';
         meta = {
-          license = (pkgsFor "x86_64-linux").lib.licenses.gpl2Only;
+          license = (pkgsFor "x86_64-linux").lib.licenses.mit;
           description = "wheel-hid-emulator";
         };
       };

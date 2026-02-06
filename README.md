@@ -4,20 +4,16 @@
 
 [![Watch the demo](https://img.youtube.com/vi/8nfdKWtkmtE/maxresdefault.jpg)](https://www.youtube.com/watch?v=8nfdKWtkmtE)
 
-## Requirements
-
-- Linux kernel with `CONFIG_USB_CONFIGFS=y` and `libcomposite`
-- Root privileges
-- g++ with C++17
-
 ## Install & Run
+
+Requires `g++` and `make`.
 
 ```bash
 make
-sudo modprobe libcomposite
-sudo modprobe dummy_hcd   # only for self-hosted testing
 sudo ./wheel-emulator
 ```
+
+Optional: `sudo make install` to copy to `/usr/local/bin/`.
 
 **Ctrl+M** — toggle emulation. **Ctrl+C** — exit.
 
@@ -67,8 +63,10 @@ gain=0.3               # 0.1-4.0
 
 ## License
 
-Open source. Contributions welcome.
+MIT License. See [LICENSE](LICENSE).
 
 ---
+
+Most of this code was written with heavy use of AI (Claude, GPT, Copilot).
 
 Architecture details: [`logics.md`](logics.md)
